@@ -605,10 +605,10 @@ class NavigatorService:
         self.record_activity(student_id, "job_analyzed", "Job Description Added", f"Analyzed {doc.title} ({len(text)} chars)")
         return doc
 
-    def fetch_job_from_placement_portal(self, student_id: str, job_id: str, portal_url: str | None = None) -> JobDocument:
+    async def fetch_job_from_placement_portal_async(self, student_id: str, job_id: str, portal_url: str | None = None) -> JobDocument:
         """Fetch a live portal JD through Playwright and persist it for analysis."""
         portal = PlacementPortalClient(base_url=portal_url)
-        job = portal.fetch_job(job_id)
+        job = await portal.fetch_job(job_id)
         if not job.get("text"):
             raise ValueError(f"Placement portal returned an empty job description for {job_id}.")
         run_id = self._get_student_run_id(student_id)
@@ -624,9 +624,14 @@ class NavigatorService:
         self.record_activity(student_id, "job_analyzed", "Job Description Fetched", f"Fetched {doc.title} from placement drive {doc.job_id}")
         return doc
 
-    def apply_to_placement_job(self, student_id: str, job_id: str, portal_url: str | None = None, preferred_location: str | None = None) -> dict[str, Any]:
+    def fetch_job_from_placement_portal(self, student_id: str, job_id: str, portal_url: str | None = None) -> JobDocument:
+        """Legacy synchronous wrapper for non-web callers."""
+        import asyncio
+        return asyncio.run(self.fetch_job_from_placement_portal_async(student_id, job_id, portal_url))
+
+    async def apply_to_placement_job_async(self, student_id: str, job_id: str, portal_url: str | None = None, preferred_location: str | None = None) -> dict[str, Any]:
         """Submit a placement application through the portal's Playwright UI."""
-        result = PlacementPortalClient(base_url=portal_url).apply_to_job(job_id, preferred_location)
+        result = await PlacementPortalClient(base_url=portal_url).apply_to_job(job_id, preferred_location)
         self.record_activity(
             student_id,
             "placement_application",
@@ -635,14 +640,24 @@ class NavigatorService:
         )
         return result
 
-    def find_placement_opportunities(self, student_id: str, portal_url: str | None = None) -> list[dict[str, Any]]:
+    def apply_to_placement_job(self, student_id: str, job_id: str, portal_url: str | None = None, preferred_location: str | None = None) -> dict[str, Any]:
+        """Legacy synchronous wrapper for non-web callers."""
+        import asyncio
+        return asyncio.run(self.apply_to_placement_job_async(student_id, job_id, portal_url, preferred_location))
+
+    async def find_placement_opportunities_async(self, student_id: str, portal_url: str | None = None) -> list[dict[str, Any]]:
         """Match the current AI career target and gaps to live portal drives."""
         goal = self.get_active_career_goal(student_id)
         report = self.get_latest_gap_report(student_id)
         target_skills = list(goal.target_skills)
         if report:
             target_skills = list(dict.fromkeys(target_skills + report.high_priority_skills))
-        return PlacementPortalClient(base_url=portal_url).find_matching_jobs(goal.role, target_skills)
+        return await PlacementPortalClient(base_url=portal_url).find_matching_jobs(goal.role, target_skills)
+
+    def find_placement_opportunities(self, student_id: str, portal_url: str | None = None) -> list[dict[str, Any]]:
+        """Legacy synchronous wrapper for non-web callers."""
+        import asyncio
+        return asyncio.run(self.find_placement_opportunities_async(student_id, portal_url))
 
     def placement_portal_url(self) -> str:
         """Return the configured portal origin for links rendered in the UI."""

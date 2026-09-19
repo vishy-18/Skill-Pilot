@@ -171,7 +171,10 @@ def build_navigator_flow(call: Callable = complete) -> Any:
         raw_text = job_input.get("text", "")
         if job_input.get("portal_job_id"):
             try:
-                portal_job = PlacementPortalClient(base_url=job_input.get("portal_url")).fetch_job(job_input["portal_job_id"])
+                import asyncio
+                portal_job = asyncio.run(
+                    PlacementPortalClient(base_url=job_input.get("portal_url")).fetch_job(job_input["portal_job_id"])
+                )
             except PlacementPortalError as exc:
                 ctx.append("failure", {"kind": "placement_portal_unavailable", "detail": str(exc)}, produced_by="placement_portal")
                 return RunState.FAILED

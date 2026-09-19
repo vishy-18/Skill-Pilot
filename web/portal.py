@@ -1238,7 +1238,7 @@ def career_goals_update(request: Request, role: str = Form(...)):
 # ------------------------------------------------------------- JOB OPPORTUNITIES
 
 @app.get("/job-opportunities", response_class=HTMLResponse)
-def job_opportunities_view(request: Request, notice: str = "", error: str = ""):
+async def job_opportunities_view(request: Request, notice: str = "", error: str = ""):
     svc = get_service()
     student = get_current_student(request, svc)
     if not student:
@@ -1250,7 +1250,7 @@ def job_opportunities_view(request: Request, notice: str = "", error: str = ""):
     if report:
         target_skills = list(dict.fromkeys(target_skills + report.high_priority_skills))
     try:
-        jobs = svc.find_placement_opportunities(student.student_id)
+        jobs = await svc.find_placement_opportunities_async(student.student_id)
     except PlacementPortalError as exc:
         jobs = []
         error = str(exc)
@@ -1362,7 +1362,7 @@ def job_opportunities_view(request: Request, notice: str = "", error: str = ""):
 
 
 @app.post("/job-opportunities/decision")
-def job_opportunities_decision(
+async def job_opportunities_decision(
     request: Request,
     job_id: str = Form(...),
     decision: str = Form(...),
@@ -1373,7 +1373,7 @@ def job_opportunities_decision(
         return RedirectResponse("/login", status_code=303)
     if decision == "yes":
       try:
-        result = svc.apply_to_placement_job(student.student_id, job_id)
+        result = await svc.apply_to_placement_job_async(student.student_id, job_id)
         message = result.get("message", f"Application submitted for {job_id}.")
         return RedirectResponse(f"/job-opportunities?notice={html.escape(message)}", status_code=303)
       except PlacementPortalError as exc:
