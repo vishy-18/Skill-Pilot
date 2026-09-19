@@ -1260,7 +1260,12 @@ async def job_opportunities_view(request: Request, notice: str = "", error: str 
 
     notice_html = f"<div class='toast-success' role='status'>Application applied successfully: {html.escape(notice)}</div>" if notice else ""
     error_html = f"<div class='toast-error' role='alert'>{html.escape(error)}</div>" if error else ""
-    portal_url = svc.placement_portal_url()
+    try:
+      portal_url = svc.placement_portal_url()
+    except PlacementPortalError as exc:
+      portal_url = ""
+      if not error:
+        error = str(exc)
     cards = []
     for job in jobs:
         skills = ", ".join(job.get("matched_skills", [])) or "Role alignment"

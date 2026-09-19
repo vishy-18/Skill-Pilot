@@ -10,6 +10,8 @@ import os
 from contextlib import contextmanager
 from typing import Any, Iterator
 
+from slice.config import load_env
+
 
 class PlacementPortalError(RuntimeError):
     """Raised when the placement portal cannot complete a browser operation."""
@@ -19,7 +21,14 @@ class PlacementPortalClient:
     """Use Playwright off the FastAPI event-loop thread on Windows."""
 
     def __init__(self, base_url: str | None = None, student_id: str | None = None, password: str | None = None, headless: bool | None = None) -> None:
-        self.base_url = (base_url or os.getenv("PLACEMENT_PORTAL_URL", "http://127.0.0.1:3000")).rstrip("/")
+        load_env()
+        configured_url = base_url or os.getenv("PLACEMENT_PORTAL_URL", "").strip()
+        if not configured_url:
+            raise PlacementPortalError(
+                "PLACEMENT_PORTAL_URL is not configured. Add the forwarded Mock Career Portal URL to .env, "
+                "for example: PLACEMENT_PORTAL_URL=https://your-tunnel.devtunnels.ms"
+            )
+        self.base_url = configured_url.rstrip("/")
         self.student_id = student_id or os.getenv("PLACEMENT_PORTAL_STUDENT_ID", "AU2027CSE001")
         self.password = password or os.getenv("PLACEMENT_PORTAL_PASSWORD", "student123")
         self.headless = headless if headless is not None else os.getenv("PLAYWRIGHT_HEADLESS", "true").lower() != "false"
