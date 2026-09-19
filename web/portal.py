@@ -29,6 +29,7 @@ from navigator.schema import (
     StudentRegistration,
 )
 from navigator.services import ROLE_SKILLS, NavigatorService
+from navigator.placement_portal import PlacementPortalError
 from navigator.stub import run_arun_demo
 
 DB = os.environ.get("SLICE_DB", "run.db")
@@ -308,6 +309,79 @@ nav {{
   display: flex;
   align-items: center;
   justify-content: space-between;
+}}
+.job-detail-view {{
+  grid-column: 1 / -1;
+  background: var(--surface);
+  border: 1px solid var(--primary-border);
+  border-top: 4px solid var(--primary);
+  border-radius: 10px;
+  padding: 2rem;
+  margin-bottom: 2rem;
+  box-shadow: var(--shadow-md);
+}}
+.job-detail-header {{
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 1.5rem;
+  padding-bottom: 1.25rem;
+  border-bottom: 1px solid var(--border);
+}}
+.job-detail-header h2 {{
+  font-family: 'Outfit', sans-serif;
+  color: #1e3a8a;
+  font-size: 1.7rem;
+  margin-top: 0.55rem;
+}}
+.job-detail-header p {{
+  color: var(--text-muted);
+  font-weight: 700;
+  margin-top: 0.15rem;
+}}
+.job-detail-content {{
+  display: grid;
+  grid-template-columns: minmax(0, 1.7fr) minmax(14rem, 0.8fr);
+  gap: 2.25rem;
+  padding-top: 1.5rem;
+}}
+.job-detail-content h3 {{
+  font-family: 'Outfit', sans-serif;
+  color: #1e293b;
+  font-size: 1.05rem;
+  margin-bottom: 0.75rem;
+}}
+.job-description-text {{
+  white-space: pre-wrap;
+  color: #334155;
+  font-size: 0.95rem;
+  line-height: 1.8;
+}}
+.job-detail-content aside {{
+  background: var(--surface-alt);
+  border-left: 3px solid var(--primary-border);
+  padding: 1.1rem 1.25rem;
+  border-radius: 6px;
+}}
+.job-detail-content aside p {{
+  color: #475569;
+  font-size: 0.84rem;
+  line-height: 1.6;
+  padding: 0.7rem 0;
+  border-top: 1px solid var(--border);
+}}
+.job-detail-content aside p:first-of-type {{ border-top: 0; padding-top: 0; }}
+.job-detail-actions {{
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 1.5rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--border);
+}}
+@media (max-width: 800px) {{
+  .job-detail-view {{ padding: 1.25rem; }}
+  .job-detail-header {{ flex-direction: column; }}
+  .job-detail-content {{ grid-template-columns: 1fr; gap: 1.25rem; }}
 }}
 
 /* Skill Progress Bars */
@@ -589,6 +663,7 @@ def render_page(
         <li><a href="/" class="{'active' if active_nav=='dashboard' else ''}">▦ &nbsp; Dashboard</a></li>
         <li><a href="/career-analysis" class="{'active' if active_nav=='analysis' else ''}">⌁ &nbsp; Career Analysis</a></li>
         <li><a href="/career-goals" class="{'active' if active_nav=='goals' else ''}">◎ &nbsp; Career Goals</a></li>
+        <li><a href="/job-opportunities" class="{'active' if active_nav=='opportunities' else ''}">⌖ &nbsp; Job Opportunities</a></li>
         <li><a href="/learning-coach" class="{'active' if active_nav=='coach' else ''}">✦ &nbsp; AI Coach</a></li>
         <li><a href="/assessment" class="{'active' if active_nav=='assessment' else ''}">✓ &nbsp; Assessments</a></li>
         <li><a href="/learning-plan" class="{'active' if active_nav=='plan' else ''}">☷ &nbsp; Learning Plan</a></li>
@@ -1074,6 +1149,135 @@ def career_goals_update(request: Request, role: str = Form(...)):
         return RedirectResponse("/login", status_code=303)
     svc.update_career_goal(student.student_id, role)
     return RedirectResponse("/career-analysis", status_code=303)
+
+
+# ------------------------------------------------------------- JOB OPPORTUNITIES
+
+@app.get("/job-opportunities", response_class=HTMLResponse)
+def job_opportunities_view(request: Request, notice: str = "", error: str = ""):
+    svc = get_service()
+    student = get_current_student(request, svc)
+    if not student:
+        return RedirectResponse("/login", status_code=303)
+
+    goal = svc.get_active_career_goal(student.student_id)
+    report = svc.get_latest_gap_report(student.student_id)
+    target_skills = list(goal.target_skills)
+    if report:
+        target_skills = list(dict.fromkeys(target_skills + report.high_priority_skills))
+    try:
+        jobs = svc.find_placement_opportunities(student.student_id)
+    except PlacementPortalError as exc:
+        jobs = []
+        error = str(exc)
+
+    notice_html = f"<div class='box-success' style='margin-bottom:1rem;'>{html.escape(notice)}</div>" if notice else ""
+    error_html = f"<div class='box-danger' style='margin-bottom:1rem;'>{html.escape(error)}</div>" if error else ""
+    portal_url = svc.placement_portal_url()
+    cards = []
+    for job in jobs:
+        skills = ", ".join(job.get("matched_skills", [])) or "Role alignment"
+        eligibility_reason = job.get("eligibility_reason", "")
+        if job.get("eligible"):
+            eligibility = "Good match for your profile"
+        elif "submitted your application" in eligibility_reason.lower():
+            eligibility = "Application already submitted"
+        else:
+            eligibility = "Not a match for this profile"
+        details_id = f"job-details-{html.escape(job['job_id'])}"
+        card_id = f"job-card-{html.escape(job['job_id'])}"
+        required_skills = html.escape(job.get("required_skills", "") or "Not listed")
+        preferred_skills = html.escape(job.get("preferred_skills", "") or "Not listed")
+        full_description = html.escape(job.get("text", "") or job.get("description", ""))
+        apply_url = html.escape(job.get("url") or f"{portal_url}/jobs/{job['job_id']}")
+        apply_action = (
+            f"<a class='btn' href='{apply_url}' target='_blank' rel='noopener noreferrer'>Apply Now</a>"
+            if job.get("eligible") else
+            "<button class='btn' type='button' disabled>Apply Now</button>"
+        )
+        cards.append(f"""
+        <article id="{card_id}" class="card opportunity-card" style="border-top:4px solid var(--primary);">
+          <div style="display:flex; justify-content:space-between; gap:1rem; align-items:flex-start;">
+            <div><span class="badge badge-primary">{html.escape(job['job_id'])}</span>
+              <h2 style="font-family:'Outfit',sans-serif; color:#1e3a8a; margin-top:0.45rem;">{html.escape(job['title'])}</h2>
+              <p style="font-weight:700; color:var(--text-muted);">{html.escape(job['company'])}</p>
+            </div>
+            <span class="badge {'badge-verified' if job.get('eligible') else 'badge-waiting'}">{html.escape(eligibility)}</span>
+          </div>
+          <p style="margin:1rem 0; color:#334155;">{html.escape(job.get('description', ''))}</p>
+          <p style="font-size:0.84rem; color:var(--text-muted);"><strong>Matched to:</strong> {html.escape(skills)}</p>
+          <p style="font-size:0.84rem; color:var(--text-muted); margin-top:0.35rem;"><strong>Portal reason:</strong> {html.escape(job.get('eligibility_reason', ''))}</p>
+          <div style="display:flex; gap:0.6rem; flex-wrap:wrap; margin-top:1rem;">
+            <button class="btn btn-secondary" type="button" onclick="showJobDetails('{card_id}', '{details_id}')">More Info</button>
+            {apply_action}
+          </div>
+        </article>
+        <section id="{details_id}" class="job-detail-view" hidden>
+          <div class="job-detail-header">
+            <div>
+              <span class="badge badge-primary">{html.escape(job['job_id'])}</span>
+              <h2>{html.escape(job['title'])}</h2>
+              <p>{html.escape(job['company'])}</p>
+            </div>
+          </div>
+          <div class="job-detail-content">
+            <div>
+              <h3>Full Job Description</h3>
+              <div class="job-description-text">{full_description}</div>
+            </div>
+            <aside>
+              <h3>Role Match</h3>
+              <p><strong>Matched skills</strong><br>{html.escape(skills)}</p>
+              <p><strong>Required skills</strong><br>{required_skills}</p>
+              <p><strong>Preferred skills</strong><br>{preferred_skills}</p>
+              <p><strong>Eligibility</strong><br>{html.escape(job.get('eligibility_reason', ''))}</p>
+            </aside>
+          </div>
+          <div class="job-detail-actions">
+            <button class="btn btn-secondary" type="button" onclick="hideJobDetails('{card_id}', '{details_id}')">Hide Info</button>
+          </div>
+        </section>""")
+    if not cards and not error:
+        cards.append("<div class='box-info'>No matching roles were found in the placement portal for this target profile.</div>")
+    content = f"""
+    {notice_html}{error_html}
+    <div class="welcome-card"><div><h1>Job Opportunities</h1>
+      <p style="color:var(--text-muted);">Live roles matched from the placement portal using your AI career analysis.</p></div>
+      <span class="role-tag">{html.escape(goal.role)}</span></div>
+    <div class="card" style="margin-bottom:1.25rem;">
+      <div class="card-title">How these roles were selected</div>
+      <p style="font-size:0.9rem; color:var(--text-muted);">Target role: <strong>{html.escape(goal.role)}</strong></p>
+      <p style="font-size:0.9rem; color:var(--text-muted); margin-top:0.35rem;">AI-aligned skills: {html.escape(', '.join(target_skills))}</p>
+    </div>
+    <div id="opportunity-results" style="display:grid; grid-template-columns:repeat(auto-fit,minmax(20rem,1fr)); gap:1.25rem;">{"".join(cards)}</div>
+    <script>
+      function showJobDetails(cardId, detailsId) {{
+        document.querySelectorAll('.opportunity-card, .job-detail-view').forEach((element) => element.setAttribute('hidden', ''));
+        const details = document.getElementById(detailsId);
+        details.removeAttribute('hidden');
+        window.scrollTo({{ top: details.offsetTop - 24, behavior: 'smooth' }});
+      }}
+      function hideJobDetails(cardId, detailsId) {{
+        document.getElementById(detailsId).setAttribute('hidden', '');
+        document.querySelectorAll('.opportunity-card').forEach((element) => element.removeAttribute('hidden'));
+        window.scrollTo({{ top: document.getElementById('opportunity-results').offsetTop - 24, behavior: 'smooth' }});
+      }}
+    </script>
+    """
+    return render_page("Job Opportunities", content, active_nav="opportunities", student=student)
+
+
+@app.post("/job-opportunities/apply")
+def job_opportunities_apply(request: Request, job_id: str = Form(...)):
+    svc = get_service()
+    student = get_current_student(request, svc)
+    if not student:
+        return RedirectResponse("/login", status_code=303)
+    try:
+        result = svc.apply_to_placement_job(student.student_id, job_id)
+        return RedirectResponse(f"/job-opportunities?notice={html.escape(result['message'])}", status_code=303)
+    except PlacementPortalError as exc:
+        return RedirectResponse(f"/job-opportunities?error={html.escape(str(exc))}", status_code=303)
 
 
 # ------------------------------------------------------------- AI LEARNING COACH (Section 9)

@@ -25,6 +25,7 @@ from slice.config import settings as get_settings
 from slice.records import RunState
 from slice.store import Store
 from .provenance import verify_batch
+from .placement_portal import PlacementPortalClient
 from .schema import (
     ActivityEvent,
     AssessmentAnswer,
@@ -603,6 +604,44 @@ class NavigatorService:
         self.store.append(run_id, "job_document", doc.model_dump(), produced_by="jd_analyzer")
         self.record_activity(student_id, "job_analyzed", "Job Description Added", f"Analyzed {doc.title} ({len(text)} chars)")
         return doc
+
+    def fetch_job_from_placement_portal(self, student_id: str, job_id: str, portal_url: str | None = None) -> JobDocument:
+        """Fetch a live portal JD through Playwright and persist it for analysis."""
+        portal = PlacementPortalClient(base_url=portal_url)
+        job = portal.fetch_job(job_id)
+        if not job.get("text"):
+            raise ValueError(f"Placement portal returned an empty job description for {job_id}.")
+        run_id = self._get_student_run_id(student_id)
+        doc = JobDocument(
+            job_id=job["job_id"],
+            student_id=student_id,
+            title=job["title"],
+            company=job["company"],
+            text=job["text"],
+            url=job["url"],
+        )
+        self.store.append(run_id, "job_document", doc.model_dump(), produced_by="placement_portal:playwright")
+        self.record_activity(student_id, "job_analyzed", "Job Description Fetched", f"Fetched {doc.title} from placement drive {doc.job_id}")
+        return doc
+
+    def apply_to_placement_job(self, student_id: str, job_id: str, portal_url: str | None = None, preferred_location: str | None = None) -> dict[str, Any]:
+        """Submit a placement application through the portal's Playwright UI."""
+        result = PlacementPortalClient(base_url=portal_url).apply_to_job(job_id, preferred_location)
+        self.record_activity(student_id, "placement_application", job_id, result["status"], result["message"])
+        return result
+
+    def find_placement_opportunities(self, student_id: str, portal_url: str | None = None) -> list[dict[str, Any]]:
+        """Match the current AI career target and gaps to live portal drives."""
+        goal = self.get_active_career_goal(student_id)
+        report = self.get_latest_gap_report(student_id)
+        target_skills = list(goal.target_skills)
+        if report:
+            target_skills = list(dict.fromkeys(target_skills + report.high_priority_skills))
+        return PlacementPortalClient(base_url=portal_url).find_matching_jobs(goal.role, target_skills)
+
+    def placement_portal_url(self) -> str:
+        """Return the configured portal origin for links rendered in the UI."""
+        return PlacementPortalClient().base_url
 
     def extract_job_requirements(self, text: str) -> list[ExtractedRequirement]:
         """Extract requirements with exact source quotes for provenance checking."""

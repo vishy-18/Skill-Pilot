@@ -19,6 +19,7 @@ from slice import callback
 from slice.llm import complete
 from slice.records import RunState
 from .provenance import verify_batch
+from .placement_portal import PlacementPortalClient, PlacementPortalError
 from .schema import (
     EvaluationResult,
     ExtractedRequirement,
@@ -168,6 +169,17 @@ def build_navigator_flow(call: Callable = complete) -> Any:
             return RunState.FAILED
 
         raw_text = job_input.get("text", "")
+        if job_input.get("portal_job_id"):
+            try:
+                portal_job = PlacementPortalClient(base_url=job_input.get("portal_url")).fetch_job(job_input["portal_job_id"])
+            except PlacementPortalError as exc:
+                ctx.append("failure", {"kind": "placement_portal_unavailable", "detail": str(exc)}, produced_by="placement_portal")
+                return RunState.FAILED
+            raw_text = portal_job["text"]
+            job_input = {**job_input, **portal_job, "job_id": portal_job["job_id"]}
+        if not raw_text:
+            ctx.append("failure", {"kind": "empty_job_description", "detail": "No job description text was supplied or fetched."}, produced_by="flow")
+            return RunState.FAILED
         student_id = job_input.get("student_id", "std_default")
 
         extract_messages = [

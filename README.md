@@ -339,6 +339,23 @@ uvicorn web.portal:app --host 127.0.0.1 --port 8000 --reload
 
 Open <http://127.0.0.1:8000>.
 
+### Use the forwarded placement portal with the agent
+
+Start or forward the `Mock Carrer Portal` on its local URL, install the browser
+runtime, and configure the agent before calling `NavigatorService` placement
+tools:
+
+```powershell
+python -m playwright install chromium
+$env:PLACEMENT_PORTAL_URL = "https://n4mst3ss-3000.inc1.devtunnels.ms"
+$env:PLACEMENT_PORTAL_STUDENT_ID = "AU2027CSE001"
+$env:PLACEMENT_PORTAL_PASSWORD = "student123"
+```
+
+`fetch_job_from_placement_portal(student_id, job_id)` reads the job description
+through the portal UI. `apply_to_placement_job(student_id, job_id)` checks the
+portal's eligibility badge and only confirms an eligible application.
+
 The existing demo user is:
 
 ```text
