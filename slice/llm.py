@@ -157,7 +157,7 @@ def complete(
 
             t0 = time.time()
             try:
-                r = httpx.post(f"{API}/chat/completions", json=body, timeout=timeout,
+                r = httpx.post(f"{settings.base_url}/chat/completions", json=body, timeout=timeout,
                                headers={"Authorization": f"Bearer {settings.api_key}"})
             except httpx.RequestError as e:
                 if role == "fallback":

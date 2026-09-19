@@ -40,6 +40,8 @@ class Settings:
     langfuse_secret: str
     langfuse_host: str
 
+    base_url: str = "https://openrouter.ai/api/v1"
+
     @property
     def tracing_enabled(self) -> bool:
         return bool(self.langfuse_public and self.langfuse_secret)
@@ -49,8 +51,12 @@ def settings(reload: bool = True) -> Settings:
     if reload:
         load_env()
     g = os.environ.get
+    # Accept GROQ_API_KEY or OPENROUTER_API_KEY (Groq takes precedence)
+    _api_key = g("GROQ_API_KEY", "").strip() or g("OPENROUTER_API_KEY", "").strip()
+    _base_url = g("SLICE_BASE_URL", "https://openrouter.ai/api/v1").strip()
     return Settings(
-        api_key               = g("OPENROUTER_API_KEY", "").strip(),
+        api_key               = _api_key,
+        base_url              = _base_url,
         model                 = g("SLICE_MODEL", "inclusionai/ling-3.0-flash").strip(),
         fallback_model        = g("SLICE_FALLBACK_MODEL", "mistralai/mistral-small-3.2-24b-instruct").strip(),
         escalation_model      = g("SLICE_ESCALATION_MODEL", "anthropic/claude-haiku-4.5").strip(),

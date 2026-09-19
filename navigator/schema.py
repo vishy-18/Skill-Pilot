@@ -25,6 +25,14 @@ class StudentRegistration(BaseModel):
     department: str = Field(min_length=2, max_length=100)
     graduation_year: int = Field(ge=2024, le=2032)
     password: str = Field(min_length=4)
+    # Education details
+    education_level: str = "B.Tech"          # B.Tech, M.Tech, BCA, MCA, BSc, etc.
+    degree: str = ""                          # e.g. Computer Science
+    cgpa: float = Field(default=0.0, ge=0.0, le=10.0)
+    # Career goal
+    career_goal_role: str = "Software Engineering Intern"
+    # Resume text (extracted from uploaded PDF or pasted)
+    resume_text: str = ""
 
 
 class Student(BaseModel):
@@ -71,6 +79,14 @@ class StudentProfile(BaseModel):
     college: str
     department: str
     graduation_year: int
+    # Education extras
+    education_level: str = "B.Tech"
+    degree: str = ""
+    cgpa: float = 0.0
+    # Career goal
+    career_goal_role: str = "Software Engineering Intern"
+    # Resume
+    resume_text: str = ""
     skills: dict[str, SkillEvidenceItem] = Field(default_factory=dict)
     projects: list[ProjectEvidence] = Field(default_factory=list)
     certifications: list[CertificateEvidence] = Field(default_factory=list)

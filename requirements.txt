@@ -5,5 +5,7 @@ sqlite-vec>=0.1.9      # vector search inside the run database
 fastembed>=0.4         # local embeddings - no API key, no rate limit
 fastapi>=0.115         # the expert callback form
 uvicorn>=0.30          # serves it
+python-multipart>=0.0.9 # form and resume uploads
+pypdf>=5.0             # text extraction from uploaded PDF resumes
 # dev
 pytest>=8.0
