@@ -28,6 +28,7 @@ class PlacementPortalClient:
     @contextmanager
     def _page(self) -> Iterator[Any]:
         try:
+            from playwright.sync_api import Error as PlaywrightError
             from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
             from playwright.sync_api import sync_playwright
         except ImportError as exc:
@@ -44,7 +45,7 @@ class PlacementPortalClient:
                 self._login(page)
                 yield page
                 browser.close()
-        except PlaywrightTimeoutError as exc:
+        except (PlaywrightTimeoutError, PlaywrightError) as exc:
             raise PlacementPortalError(f"Placement portal timed out at {self.base_url}.") from exc
         except OSError as exc:
             raise PlacementPortalError(

@@ -378,6 +378,90 @@ nav {{
   padding-top: 1rem;
   border-top: 1px solid var(--border);
 }}
+.apply-decision-form {{
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}}
+.decision-question {{
+  color: #334155;
+  font-size: 0.84rem;
+  font-weight: 700;
+  margin-right: 0.15rem;
+}}
+.decision-note {{
+  color: var(--text-muted);
+  font-size: 0.84rem;
+  font-weight: 600;
+}}
+.toast-success,
+.toast-error {{
+  position: fixed;
+  top: 1.25rem;
+  right: 1.25rem;
+  z-index: 200;
+  width: min(24rem, calc(100vw - 2rem));
+  padding: 0.9rem 1rem;
+  border-radius: 8px;
+  box-shadow: var(--shadow-lg);
+  font-size: 0.84rem;
+  font-weight: 700;
+}}
+.toast-success {{
+  background: var(--success-light);
+  border: 1px solid var(--success-border);
+  color: #166534;
+}}
+.toast-error {{
+  background: var(--danger-light);
+  border: 1px solid var(--danger-border);
+  color: #991b1b;
+}}
+.opportunity-card {{
+  min-width: 0;
+}}
+.opportunity-header {{
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.9rem;
+  align-items: start;
+}}
+.opportunity-heading {{
+  min-width: 0;
+}}
+.opportunity-heading h2 {{
+  overflow-wrap: anywhere;
+  line-height: 1.25;
+}}
+.opportunity-status {{
+  max-width: 8.5rem;
+  text-align: center;
+  line-height: 1.25;
+  white-space: normal;
+}}
+.opportunity-actions {{
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+  margin-top: 1rem;
+  padding-top: 0.9rem;
+  border-top: 1px solid var(--border);
+}}
+.opportunity-actions > .btn-secondary {{
+  flex: 0 0 auto;
+}}
+.apply-decision-form {{
+  flex: 1 1 15rem;
+  min-width: 0;
+}}
+@media (max-width: 520px) {{
+  .opportunity-header {{ grid-template-columns: 1fr; }}
+  .opportunity-status {{ max-width: none; justify-self: start; }}
+  .opportunity-actions {{ align-items: stretch; }}
+  .apply-decision-form {{ flex-basis: 100%; }}
+}}
 @media (max-width: 800px) {{
   .job-detail-view {{ padding: 1.25rem; }}
   .job-detail-header {{ flex-direction: column; }}
@@ -1171,8 +1255,8 @@ def job_opportunities_view(request: Request, notice: str = "", error: str = ""):
         jobs = []
         error = str(exc)
 
-    notice_html = f"<div class='box-success' style='margin-bottom:1rem;'>{html.escape(notice)}</div>" if notice else ""
-    error_html = f"<div class='box-danger' style='margin-bottom:1rem;'>{html.escape(error)}</div>" if error else ""
+    notice_html = f"<div class='toast-success' role='status'>Application applied successfully: {html.escape(notice)}</div>" if notice else ""
+    error_html = f"<div class='toast-error' role='alert'>{html.escape(error)}</div>" if error else ""
     portal_url = svc.placement_portal_url()
     cards = []
     for job in jobs:
@@ -1191,23 +1275,30 @@ def job_opportunities_view(request: Request, notice: str = "", error: str = ""):
         full_description = html.escape(job.get("text", "") or job.get("description", ""))
         apply_url = html.escape(job.get("url") or f"{portal_url}/jobs/{job['job_id']}")
         apply_action = (
-            f"<a class='btn' href='{apply_url}' target='_blank' rel='noopener noreferrer'>Apply Now</a>"
+            f"""
+            <form method="post" action="/job-opportunities/decision" class="apply-decision-form">
+              <input type="hidden" name="job_id" value="{html.escape(job['job_id'])}">
+              <span class="decision-question">Would you like to apply?</span>
+              <button class="btn" type="submit" name="decision" value="yes">Yes</button>
+              <button class="btn btn-secondary" type="submit" name="decision" value="no">No</button>
+            </form>
+            """
             if job.get("eligible") else
-            "<button class='btn' type='button' disabled>Apply Now</button>"
+            "<span class='decision-note'>This role is not currently a match for your profile.</span>"
         )
         cards.append(f"""
         <article id="{card_id}" class="card opportunity-card" style="border-top:4px solid var(--primary);">
-          <div style="display:flex; justify-content:space-between; gap:1rem; align-items:flex-start;">
-            <div><span class="badge badge-primary">{html.escape(job['job_id'])}</span>
+          <div class="opportunity-header">
+            <div class="opportunity-heading"><span class="badge badge-primary">{html.escape(job['job_id'])}</span>
               <h2 style="font-family:'Outfit',sans-serif; color:#1e3a8a; margin-top:0.45rem;">{html.escape(job['title'])}</h2>
               <p style="font-weight:700; color:var(--text-muted);">{html.escape(job['company'])}</p>
             </div>
-            <span class="badge {'badge-verified' if job.get('eligible') else 'badge-waiting'}">{html.escape(eligibility)}</span>
+            <span class="badge opportunity-status {'badge-verified' if job.get('eligible') else 'badge-waiting'}">{html.escape(eligibility)}</span>
           </div>
           <p style="margin:1rem 0; color:#334155;">{html.escape(job.get('description', ''))}</p>
           <p style="font-size:0.84rem; color:var(--text-muted);"><strong>Matched to:</strong> {html.escape(skills)}</p>
           <p style="font-size:0.84rem; color:var(--text-muted); margin-top:0.35rem;"><strong>Portal reason:</strong> {html.escape(job.get('eligibility_reason', ''))}</p>
-          <div style="display:flex; gap:0.6rem; flex-wrap:wrap; margin-top:1rem;">
+          <div class="opportunity-actions">
             <button class="btn btn-secondary" type="button" onclick="showJobDetails('{card_id}', '{details_id}')">More Info</button>
             {apply_action}
           </div>
@@ -1267,17 +1358,24 @@ def job_opportunities_view(request: Request, notice: str = "", error: str = ""):
     return render_page("Job Opportunities", content, active_nav="opportunities", student=student)
 
 
-@app.post("/job-opportunities/apply")
-def job_opportunities_apply(request: Request, job_id: str = Form(...)):
+@app.post("/job-opportunities/decision")
+def job_opportunities_decision(
+    request: Request,
+    job_id: str = Form(...),
+    decision: str = Form(...),
+):
     svc = get_service()
     student = get_current_student(request, svc)
     if not student:
         return RedirectResponse("/login", status_code=303)
-    try:
+    if decision == "yes":
+      try:
         result = svc.apply_to_placement_job(student.student_id, job_id)
-        return RedirectResponse(f"/job-opportunities?notice={html.escape(result['message'])}", status_code=303)
-    except PlacementPortalError as exc:
+        message = result.get("message", f"Application submitted for {job_id}.")
+        return RedirectResponse(f"/job-opportunities?notice={html.escape(message)}", status_code=303)
+      except PlacementPortalError as exc:
         return RedirectResponse(f"/job-opportunities?error={html.escape(str(exc))}", status_code=303)
+    return RedirectResponse(f"/job-opportunities?notice=No application started for {html.escape(job_id)}.", status_code=303)
 
 
 # ------------------------------------------------------------- AI LEARNING COACH (Section 9)

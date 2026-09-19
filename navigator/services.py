@@ -627,7 +627,12 @@ class NavigatorService:
     def apply_to_placement_job(self, student_id: str, job_id: str, portal_url: str | None = None, preferred_location: str | None = None) -> dict[str, Any]:
         """Submit a placement application through the portal's Playwright UI."""
         result = PlacementPortalClient(base_url=portal_url).apply_to_job(job_id, preferred_location)
-        self.record_activity(student_id, "placement_application", job_id, result["status"], result["message"])
+        self.record_activity(
+            student_id,
+            "placement_application",
+            f"Application Submitted: {job_id}",
+            f"{result['status']}: {result['message']}",
+        )
         return result
 
     def find_placement_opportunities(self, student_id: str, portal_url: str | None = None) -> list[dict[str, Any]]:
