@@ -13,14 +13,18 @@ Features:
 from __future__ import annotations
 
 import html
+import io
+import math
+import re
 import os
 from typing import Any
 
-from fastapi import FastAPI, Form, Request, Response
+from fastapi import FastAPI, File, Form, Request, UploadFile
 from fastapi.responses import HTMLResponse, RedirectResponse
 
 from navigator.schema import (
     DiagnosticQuestion,
+  LearningPlan,
     ProjectEvidence,
     StudentRegistration,
 )
@@ -28,7 +32,7 @@ from navigator.services import ROLE_SKILLS, NavigatorService
 from navigator.stub import run_arun_demo
 
 DB = os.environ.get("SLICE_DB", "run.db")
-app = FastAPI(title="Skill-Pilot: Cognitive Career Navigator")
+app = FastAPI(title="Skill-Pilot")
 
 
 def get_service() -> NavigatorService:
@@ -40,6 +44,30 @@ def get_current_student(request: Request, svc: NavigatorService) -> Any:
     if not sid:
         return None
     return svc.get_student_by_id(sid)
+
+
+def extract_resume_text(filename: str, content: bytes) -> str:
+    """Extract resume text while keeping the original upload out of SQLite."""
+    if filename.lower().endswith(".pdf"):
+        try:
+            from pypdf import PdfReader
+            reader = PdfReader(io.BytesIO(content))
+            return "\n".join(page.extract_text() or "" for page in reader.pages)[:12000]
+        except Exception:
+            return ""
+    return content.decode("utf-8", errors="ignore")[:12000]
+
+
+def render_chat_markdown(text: str) -> str:
+    """Render the small markdown subset commonly returned by chat models."""
+    safe = html.escape(text or "")
+    safe = re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", safe)
+    safe = re.sub(r"(?m)^###\s+(.+)$", r"<h4>\1</h4>", safe)
+    safe = re.sub(r"(?m)^##\s+(.+)$", r"<h3>\1</h3>", safe)
+    safe = re.sub(r"(?m)^#\s+(.+)$", r"<h2>\1</h2>", safe)
+    safe = re.sub(r"(?m)^[-*]\s+(.+)$", r"<li>\1</li>", safe)
+    safe = re.sub(r"(?m)((?:<li>.*?</li>\n?)+)", r"<ul>\1</ul>", safe)
+    return safe.replace("\n", "<br>").replace("</li><br><li>", "</li><li>")
 
 
 # ------------------------------------------------------------------- BASE TEMPLATE (White & Blue)
@@ -90,25 +118,41 @@ body {{
   padding-bottom: 5rem;
 }}
 
-/* Top Navigation */
+/* Left navigation rail */
 nav {{
   background: var(--surface);
-  border-bottom: 1px solid var(--border);
-  padding: 0.75rem 2rem;
+  border-right: 1px solid var(--border);
+  padding: 1.25rem 0.85rem;
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  position: sticky;
+  flex-direction: column;
+  align-items: stretch;
+  position: fixed;
+  left: 0;
   top: 0;
+  bottom: 0;
+  width: 15rem;
   z-index: 100;
   box-shadow: var(--shadow-sm);
 }}
+
+.auth-shell {{ background: #ffffff; }}
+.auth-shell nav {{ position: static; width: 100%; height: 4.5rem; flex-direction: row; align-items: center; border-right: 0; border-bottom: 1px solid var(--border); padding: 0 3rem; box-shadow: none; }}
+.auth-shell .brand-group {{ margin: 0; }}
+.auth-shell .nav-menu {{ flex-direction: row; margin-left: auto; gap: 0.5rem; }}
+.auth-shell .user-pill {{ margin: 0 0 0 1rem; }}
+.auth-shell .container {{ max-width: 72rem; margin: 0 auto; padding: 3rem 1.5rem 5rem; }}
+.nav-account {{ display: flex; flex-direction: column; align-items: stretch; gap: 0.55rem; margin-top: auto; }}
+.nav-account .user-pill {{ margin: 0 0 0.35rem; }}
+.nav-account .btn {{ text-align: left; }}
+.auth-shell .nav-account {{ flex-direction: row; align-items: center; margin: 0 0 0 1rem; }}
+.auth-shell .nav-account .user-pill {{ margin: 0; }}
 
 .brand-group {{
   display: flex;
   align-items: center;
   gap: 0.75rem;
   text-decoration: none;
+  margin: 0.25rem 0.5rem 2rem;
 }}
 
 .brand-badge {{
@@ -125,16 +169,18 @@ nav {{
 .brand-name {{
   font-family: 'Outfit', sans-serif;
   font-weight: 700;
-  font-size: 1.15rem;
+  font-size: 1.3rem;
   color: #1e3a8a;
-  letter-spacing: -0.01em;
+  line-height: 1.15;
+  white-space: nowrap;
+  letter-spacing: 0.01em;
 }}
 
 .nav-menu {{
   display: flex;
-  gap: 1.25rem;
+  flex-direction: column;
+  gap: 0.3rem;
   list-style: none;
-  align-items: center;
 }}
 
 .nav-menu a {{
@@ -142,7 +188,8 @@ nav {{
   text-decoration: none;
   font-weight: 500;
   font-size: 0.88rem;
-  padding: 0.35rem 0.6rem;
+  padding: 0.65rem 0.75rem;
+  display: block;
   border-radius: 6px;
   transition: all 0.15s ease;
 }}
@@ -162,6 +209,8 @@ nav {{
   border: 1px solid var(--border);
   font-size: 0.85rem;
   font-weight: 600;
+  margin-top: auto;
+  margin-bottom: 0.75rem;
 }}
 
 .avatar-dot {{
@@ -173,8 +222,8 @@ nav {{
 
 .container {{
   max-width: 72rem;
-  margin: 2rem auto;
-  padding: 0 1.5rem;
+  margin: 0 0 0 15rem;
+  padding: 2rem 2.5rem 4rem;
 }}
 
 /* Welcome Banner */
@@ -322,6 +371,77 @@ nav {{
   margin-bottom: 1.25rem;
 }}
 
+.chat-message {{
+  max-width: 82%;
+  padding: 0.8rem 1rem;
+  border-radius: 8px;
+  margin: 0.65rem 0;
+  border: 1px solid var(--border);
+}}
+.chat-message p {{ margin-top: 0.25rem; white-space: pre-wrap; font-size: 0.92rem; color: #334155; }}
+.chat-user {{ margin-left: auto; background: var(--primary-light); border-color: var(--primary-border); }}
+.chat-assistant {{ background: var(--surface-alt); }}
+.chat-content {{ margin-top: 0.3rem; color: #334155; }}
+.chat-content h2, .chat-content h3, .chat-content h4 {{ color: #1e3a8a; margin: 0.45rem 0; }}
+.chat-content li {{ margin: 0.25rem 0 0.25rem 1.2rem; }}
+.path-list {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr)); gap: 0.65rem; }}
+.path-option {{ display: flex; flex-direction: column; gap: 0.15rem; padding: 0.75rem; background: #ffffff; border: 1px solid var(--border); border-radius: 8px; color: var(--text); text-decoration: none; }}
+.path-option:hover {{ border-color: var(--primary); background: var(--primary-light); }}
+.path-option span {{ color: var(--primary); font-size: 0.78rem; font-weight: 600; }}
+.assessment-layout {{ display: grid; grid-template-columns: 15rem minmax(0, 1fr); gap: 1.25rem; align-items: start; }}
+.assessment-sidebar {{ position: sticky; top: 1rem; padding: 1rem; }}
+.assessment-topic {{ display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; padding: 0.7rem; border-radius: 7px; text-decoration: none; color: var(--text); margin-bottom: 0.35rem; border: 1px solid transparent; font-size: 0.85rem; }}
+.assessment-topic:hover, .assessment-topic.selected {{ background: var(--primary-light); border-color: var(--primary-border); color: var(--primary-hover); }}
+.assessment-topic strong {{ color: var(--primary); font-size: 0.8rem; }}
+.assessment-question {{ padding: 1rem 0; border-bottom: 1px solid var(--border); }}
+.assessment-question h3 {{ font-size: 1rem; margin: 0.55rem 0 0.75rem; color: var(--text); }}
+.assessment-option {{ display: block; padding: 0.55rem 0.7rem; margin: 0.35rem 0; border: 1px solid var(--border); border-radius: 6px; font-weight: 400; cursor: pointer; }}
+.assessment-option:hover {{ background: var(--primary-light); border-color: var(--primary-border); }}
+.progress-grid {{ display: grid; grid-template-columns: repeat(4, 1fr); gap: 1rem; margin-bottom: 1.25rem; }}
+.progress-kpi {{ background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 1rem; }}
+.progress-kpi strong {{ display: block; font: 700 1.7rem 'Outfit', sans-serif; color: var(--primary); }}
+.chart-grid {{ display: grid; grid-template-columns: minmax(14rem, 0.8fr) minmax(0, 1.5fr); gap: 1.25rem; align-items: stretch; }}
+.pie-wrap {{ display: flex; align-items: center; gap: 1.25rem; }}
+.pie-chart {{ width: 9rem; height: 9rem; border-radius: 50%; flex-shrink: 0; background: var(--pie); position: relative; }}
+.pie-chart::after {{ content: ''; position: absolute; inset: 2rem; background: var(--surface); border-radius: 50%; }}
+.legend {{ list-style: none; font-size: 0.82rem; color: var(--text-muted); }}
+.legend li {{ margin: 0.35rem 0; }}
+.legend i {{ width: 0.65rem; height: 0.65rem; display: inline-block; border-radius: 2px; margin-right: 0.4rem; background: var(--swatch); }}
+.path-tree {{ position: relative; padding-left: 1.25rem; }}
+.path-tree::before {{ content: ''; position: absolute; left: 0.35rem; top: 0.75rem; bottom: 0.75rem; border-left: 2px solid var(--primary-border); }}
+.tree-node {{ position: relative; margin: 0 0 1rem 0.75rem; padding: 0.75rem 1rem; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); }}
+.tree-node::before {{ content: ''; position: absolute; left: -1rem; top: 1rem; width: 0.85rem; border-top: 2px solid var(--primary-border); }}
+.tree-node strong {{ color: #1e3a8a; }}
+.tree-confidence {{ float: right; margin-right: 0.4rem; color: var(--primary); font-size: 0.82rem; font-weight: 700; }}
+.tree-children {{ display: flex; flex-wrap: wrap; gap: 0.4rem; margin-top: 0.55rem; }}
+.tree-child {{ padding: 0.35rem 0.55rem; border-radius: 5px; background: var(--primary-light); color: var(--primary-hover); font-size: 0.78rem; }}
+.role-fit {{ display: grid; grid-template-columns: repeat(2, 1fr); gap: 0.65rem; }}
+.role-fit-item {{ border: 1px solid var(--border); border-radius: 7px; padding: 0.7rem; }}
+.refresh-list {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr)); gap: 0.65rem; margin-top: 0.75rem; }}
+.refresh-topic {{ display: block; padding: 0.75rem; border: 1px solid var(--warning-border); border-radius: 8px; background: var(--warning-light); color: #92400e; text-decoration: none; font-weight: 700; }}
+.refresh-topic span {{ display: block; font-size: 0.76rem; font-weight: 500; margin-top: 0.25rem; color: #a16207; }}
+.resource-grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(17rem, 1fr)); gap: 1rem; }}
+.resource-tile {{ background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 1rem; box-shadow: var(--shadow-sm); }}
+.resource-tile h3 {{ color: #1e3a8a; font-size: 1rem; margin: 0.45rem 0; }}
+.resource-link {{ display: block; padding: 0.7rem 0; border-top: 1px solid var(--border); color: var(--primary-hover); text-decoration: none; font-size: 0.85rem; }}
+.resource-link:hover {{ color: var(--primary); text-decoration: underline; }}
+.line-chart {{ width: 100%; overflow-x: auto; margin-top: 0.5rem; }}
+.line-chart svg {{ min-width: 32rem; width: 100%; height: auto; }}
+.chart-axis {{ stroke: #cbd5e1; stroke-width: 1; }}
+.chart-line {{ fill: none; stroke: var(--primary); stroke-width: 3; stroke-linecap: round; stroke-linejoin: round; }}
+.chart-dot {{ fill: #ffffff; stroke: var(--primary); stroke-width: 3; }}
+.chart-label {{ fill: var(--text-muted); font: 11px 'Plus Jakarta Sans', sans-serif; }}
+@media (max-width: 800px) {{
+  .progress-grid {{ grid-template-columns: repeat(2, 1fr); }}
+  .chart-grid {{ grid-template-columns: 1fr; }}
+  .pie-wrap {{ justify-content: center; }}
+}}
+@media (max-width: 800px) {{
+  .brand-name {{ white-space: normal; font-size: 1rem; }}
+  .auth-shell nav {{ padding: 0 1rem; }}
+  .chat-message {{ max-width: 94%; }}
+}}
+
 /* Badges */
 .badge {{
   display: inline-block;
@@ -390,6 +510,16 @@ table {{
   border-collapse: collapse;
   margin-top: 0.75rem;
 }}
+@media (max-width: 800px) {{
+  nav {{ position: static; width: 100%; border-right: 0; border-bottom: 1px solid var(--border); }}
+  .brand-group {{ margin-bottom: 1rem; }}
+  .nav-menu {{ display: grid; grid-template-columns: repeat(2, 1fr); }}
+  .user-pill {{ margin-top: 1rem; }}
+  .container {{ margin-left: 0; padding: 1.25rem 1rem 3rem; }}
+  .stats-grid {{ grid-template-columns: repeat(2, 1fr); }}
+  .assessment-layout {{ grid-template-columns: 1fr; }}
+  .assessment-sidebar {{ position: static; }}
+}}
 th, td {{
   padding: 0.75rem 1rem;
   text-align: left;
@@ -429,16 +559,15 @@ tr:hover td {{
 }}
 </style>
 </head>
-<body>
+<body class="{layout_class}">
 <nav>
   <a href="/" class="brand-group">
-    <div class="brand-badge">SKILL-PILOT</div>
-    <div class="brand-name">Cognitive Career Navigator</div>
+    <div class="brand-name">Skill-Pilot</div>
   </a>
   <ul class="nav-menu">
     {nav_links}
   </ul>
-  <div style="display:flex; align-items:center; gap:0.75rem;">
+  <div class="nav-account">
     {user_pill}
   </div>
 </nav>
@@ -457,20 +586,21 @@ def render_page(
 ) -> HTMLResponse:
     if student:
         nav_links = f"""
-        <li><a href="/" class="{'active' if active_nav=='dashboard' else ''}">Dashboard</a></li>
-        <li><a href="/career-goals" class="{'active' if active_nav=='goals' else ''}">Career Goals</a></li>
-        <li><a href="/learning-coach" class="{'active' if active_nav=='coach' else ''}">AI Coach</a></li>
-        <li><a href="/job-analyzer" class="{'active' if active_nav=='jobs' else ''}">Job Analyzer</a></li>
-        <li><a href="/learning-plan" class="{'active' if active_nav=='plan' else ''}">Learning Plan</a></li>
-        <li><a href="/progress" class="{'active' if active_nav=='progress' else ''}">Progress & Timeline</a></li>
-        <li><a href="/profile" class="{'active' if active_nav=='profile' else ''}">Profile & Evidence</a></li>
-        <li><a href="/demo" class="{'active' if active_nav=='demo' else ''}" style="color:#d97706; font-weight:600;">20-Step Demo</a></li>
+        <li><a href="/" class="{'active' if active_nav=='dashboard' else ''}">▦ &nbsp; Dashboard</a></li>
+        <li><a href="/career-analysis" class="{'active' if active_nav=='analysis' else ''}">⌁ &nbsp; Career Analysis</a></li>
+        <li><a href="/career-goals" class="{'active' if active_nav=='goals' else ''}">◎ &nbsp; Career Goals</a></li>
+        <li><a href="/learning-coach" class="{'active' if active_nav=='coach' else ''}">✦ &nbsp; AI Coach</a></li>
+        <li><a href="/assessment" class="{'active' if active_nav=='assessment' else ''}">✓ &nbsp; Assessments</a></li>
+        <li><a href="/learning-plan" class="{'active' if active_nav=='plan' else ''}">☷ &nbsp; Learning Plan</a></li>
+        <li><a href="/progress" class="{'active' if active_nav=='progress' else ''}">◷ &nbsp; Progress</a></li>
+        <li><a href="/profile" class="{'active' if active_nav=='profile' else ''}">◉ &nbsp; Profile</a></li>
         """
         user_pill = f"""
         <div class="user-pill">
           <div class="avatar-dot"></div>
           <span>{html.escape(student.name)}</span>
         </div>
+        <a href="/resources" class="btn btn-secondary" style="font-size:0.8rem; padding:0.35rem 0.75rem;">▤ Resources</a>
         <a href="/logout" class="btn btn-secondary" style="font-size:0.8rem; padding:0.35rem 0.75rem;">Logout</a>
         """
     else:
@@ -488,6 +618,7 @@ def render_page(
         nav_links=nav_links,
         user_pill=user_pill,
         content=content,
+        layout_class="app-shell" if student else "auth-shell",
     )
     return HTMLResponse(html_out)
 
@@ -538,6 +669,7 @@ def login_page(error: str = ""):
         nav_links="<li><a href='/login' class='active'>Login</a></li><li><a href='/register'>Register</a></li><li><a href='/demo'>20-Step Demo</a></li>",
         user_pill="<a href='/register' class='btn btn-secondary' style='font-size:0.85rem; padding:0.4rem 0.9rem;'>Register</a>",
         content=content,
+        layout_class="auth-shell",
     ))
 
 
@@ -581,7 +713,7 @@ def register_page(error: str = ""):
 
         {error_banner}
 
-        <form method="post" action="/register">
+        <form method="post" action="/register" enctype="multipart/form-data">
           <div style="display:grid; grid-template-columns:1fr 1fr; gap:1rem;">
             <div class="form-group">
               <label>Full Name</label>
@@ -621,6 +753,22 @@ def register_page(error: str = ""):
             </select>
           </div>
 
+          <div style="display:grid; grid-template-columns:1fr 1fr; gap:1rem;">
+            <div class="form-group">
+              <label>Education Level</label>
+              <select name="education_level"><option>B.Tech</option><option>BCA</option><option>BSc</option><option>M.Tech</option><option>MCA</option><option>MBA</option></select>
+            </div>
+            <div class="form-group">
+              <label>CGPA / GPA</label>
+              <input type="number" name="cgpa" min="0" max="10" step="0.01" value="0">
+            </div>
+          </div>
+          <div class="form-group">
+            <label>Resume (PDF or TXT)</label>
+            <input type="file" name="resume" accept=".pdf,.txt,application/pdf,text/plain">
+            <p style="font-size:0.8rem; color:var(--text-muted); margin-top:0.35rem;">Used to personalize your gap analysis and editable later from Profile.</p>
+          </div>
+
           <button type="submit" class="btn" style="width:100%; padding:0.75rem; margin-top:0.5rem;">Create Career Account &rarr;</button>
         </form>
 
@@ -635,11 +783,12 @@ def register_page(error: str = ""):
         nav_links="<li><a href='/login'>Login</a></li><li><a href='/register' class='active'>Register</a></li><li><a href='/demo'>20-Step Demo</a></li>",
         user_pill="<a href='/login' class='btn btn-secondary' style='font-size:0.85rem; padding:0.4rem 0.9rem;'>Sign In</a>",
         content=content,
+        layout_class="auth-shell",
     ))
 
 
 @app.post("/register")
-def handle_register(
+async def handle_register(
     name: str = Form(...),
     graduation_year: int = Form(...),
     college: str = Form(...),
@@ -647,8 +796,14 @@ def handle_register(
     email: str = Form(...),
     password: str = Form(...),
     target_role: str = Form("Software Engineering Intern"),
+    education_level: str = Form("B.Tech"),
+    cgpa: float = Form(0.0),
+    resume: UploadFile | None = File(None),
 ):
     svc = get_service()
+    resume_text = ""
+    if resume and resume.filename:
+        resume_text = extract_resume_text(resume.filename, await resume.read())
     reg = StudentRegistration(
         name=name.strip(),
         graduation_year=graduation_year,
@@ -656,13 +811,63 @@ def handle_register(
         department=department.strip(),
         email=email.strip(),
         password=password.strip(),
+        education_level=education_level,
+        cgpa=cgpa,
+        career_goal_role=target_role,
+        resume_text=resume_text,
     )
     student = svc.register_student(reg)
-    svc.create_career_goal(student.student_id, target_role)
+    svc.analyze_resume_and_gaps_with_llm(student.student_id)
 
     resp = RedirectResponse("/", status_code=303)
     resp.set_cookie("session_student_id", student.student_id, max_age=86400, httponly=True)
     return resp
+
+
+# ---------------------------------------------------------- CAREER ANALYSIS
+
+@app.get("/career-analysis", response_class=HTMLResponse)
+def career_analysis_view(request: Request):
+    svc = get_service()
+    student = get_current_student(request, svc)
+    if not student:
+        return RedirectResponse("/login", status_code=303)
+    profile = svc.get_student_profile(student.student_id)
+    goal = svc.get_active_career_goal(student.student_id)
+    report = svc.get_latest_gap_report(student.student_id)
+    if not report:
+        report = svc.analyze_resume_and_gaps_with_llm(student.student_id)
+    rows = "".join(
+        f"<tr><td><strong>{html.escape(g.skill)}</strong></td><td>{g.current_score}/100</td>"
+        f"<td>{html.escape(g.current_status)}</td><td><span class='badge badge-{'excluded' if g.priority == 'High' else 'primary'}'>{html.escape(g.priority)} priority</span></td>"
+        f"<td>{html.escape(g.reason)}</td></tr>" for g in report.gaps
+    )
+    resume_state = "Resume analyzed" if profile.resume_text else "No resume uploaded yet"
+    content = f"""
+    <div class="welcome-card"><div><h1>Your Career Analysis</h1>
+      <p style="color:var(--text-muted);">{html.escape(resume_state)} for the {html.escape(goal.role)} pathway.</p></div>
+      <span class="role-tag">{html.escape(goal.role)}</span></div>
+    <div class="card"><div class="card-title">What to work on next</div>
+      <p style="font-size:0.9rem; color:var(--text-muted); margin-bottom:1rem;">The single career agent compares your resume, assessments, prior evidence, and selected goal. High-priority topics appear first in coaching and assessments.</p>
+      <table><thead><tr><th>Skill</th><th>Current</th><th>Level</th><th>Priority</th><th>Why it matters</th></tr></thead><tbody>{rows}</tbody></table>
+      <div class="box-info" style="margin-top:1.25rem;"><strong>Priority topics:</strong> {html.escape(', '.join(report.high_priority_skills) or 'No critical gaps yet')}</div>
+    </div>
+    <div class="card"><div class="card-title">Keep your analysis current</div>
+      <p style="font-size:0.9rem; color:var(--text-muted); margin-bottom:1rem;">Update your resume or goal whenever your direction changes, then rerun the analysis.</p>
+      <a class="btn" href="/profile">Edit profile and resume</a>
+      <form method="post" action="/career-analysis/analyze" style="display:inline-block; margin-left:0.5rem;"><button class="btn btn-secondary" type="submit">Run analysis again</button></form>
+    </div>"""
+    return render_page("Career Analysis", content, active_nav="analysis", student=student)
+
+
+@app.post("/career-analysis/analyze")
+def career_analysis_run(request: Request):
+    svc = get_service()
+    student = get_current_student(request, svc)
+    if not student:
+        return RedirectResponse("/login", status_code=303)
+    svc.analyze_resume_and_gaps_with_llm(student.student_id)
+    return RedirectResponse("/career-analysis", status_code=303)
 
 
 # ------------------------------------------------------------------- DASHBOARD (Section 8)
@@ -678,6 +883,7 @@ def dashboard_view(request: Request):
     goal = svc.get_active_career_goal(student.student_id)
     rec = svc.select_next_skill(student.student_id)
     pending_chk = svc.get_pending_decisions(student.student_id)
+    metrics = svc.get_dashboard_metrics(student.student_id)
 
     # Meter bars
     meters = ""
@@ -696,6 +902,10 @@ def dashboard_view(request: Request):
 
     # Reasons list
     reasons_html = "".join(f"<li>{html.escape(r)}</li>" for r in rec["reasons"])
+    plan_paths = "".join(
+      f"<a class='path-option' href='/learning-plan?topic={html.escape(skill)}'><strong>{html.escape(skill)}</strong><span>Build this path</span></a>"
+      for skill in goal.target_skills
+    )
 
     # Pending decisions
     chk_html = ""
@@ -730,11 +940,11 @@ def dashboard_view(request: Request):
 
     <div class="stats-grid">
       <div class="stat-box">
-        <div class="stat-val">62%</div>
+        <div class="stat-val">{metrics["readiness"]}%</div>
         <div class="stat-desc">Role Benchmark Readiness</div>
       </div>
       <div class="stat-box">
-        <div class="stat-val">3</div>
+        <div class="stat-val">{metrics["improved"]}</div>
         <div class="stat-desc">Skills Improved Recently</div>
       </div>
       <div class="stat-box">
@@ -742,7 +952,7 @@ def dashboard_view(request: Request):
         <div class="stat-desc">Pending Checkpoints</div>
       </div>
       <div class="stat-box">
-        <div class="stat-val">{profile.completion_pct}%</div>
+        <div class="stat-val">{metrics["profile_completion"]}%</div>
         <div class="stat-desc">Profile Completion</div>
       </div>
     </div>
@@ -795,6 +1005,11 @@ def dashboard_view(request: Request):
             Paste job requirements to run citation provenance checks and extract tailored skill gaps.
           </p>
           <a href="/job-analyzer" class="btn btn-secondary" style="width:100%; text-align:center;">Open Job Analyzer &rarr;</a>
+        </div>
+        <div class="card">
+          <div class="card-title">Learning paths</div>
+          <p style="font-size:0.88rem; color:var(--text-muted); margin-bottom:0.75rem;">Select a role topic to add its path to your current plan.</p>
+          <div class="path-list">{plan_paths}</div>
         </div>
       </div>
     </div>
@@ -858,7 +1073,7 @@ def career_goals_update(request: Request, role: str = Form(...)):
     if not student:
         return RedirectResponse("/login", status_code=303)
     svc.update_career_goal(student.student_id, role)
-    return RedirectResponse("/career-goals", status_code=303)
+    return RedirectResponse("/career-analysis", status_code=303)
 
 
 # ------------------------------------------------------------- AI LEARNING COACH (Section 9)
@@ -870,55 +1085,46 @@ def learning_coach_view(request: Request):
     if not student:
         return RedirectResponse("/login", status_code=303)
 
-    rec = svc.select_next_skill(student.student_id)
-    lesson = svc.generate_lesson(rec["skill"])
-    q = svc.generate_assessment_question(rec["skill"])
+    history = svc.get_coach_history(student.student_id)
+    goal = svc.get_active_career_goal(student.student_id)
+    gap_report = svc.get_latest_gap_report(student.student_id)
+    messages = "".join(
+        f"<div class='chat-message {'chat-user' if item.get('role') == 'user' else 'chat-assistant'}'>"
+        f"<strong>{'You' if item.get('role') == 'user' else 'Instructor'}</strong>"
+      f"<div class='chat-content'>{render_chat_markdown(item.get('content', ''))}</div></div>" for item in history
+    )
+    if not messages:
+        messages = "<div class='box-info'><strong>Start a lesson.</strong><p>Ask me to teach one of your current gap topics. I will explain it, show an example, and check your understanding.</p></div>"
+    gap_text = ", ".join(g.skill for g in (gap_report.gaps if gap_report else []) if g.priority in ("High", "Medium")) or "No gap analysis yet"
 
     content = f"""
+    <div class="welcome-card"><div><h1>Instructor Chat</h1>
+      <p style="color:var(--text-muted);">Teaching plan for {html.escape(goal.role)} · Current focus: {html.escape(gap_text)}</p></div>
+      <span class="role-tag">Context-aware</span>
+    </div>
     <div class="card">
-      <div class="card-title">
-        <span>Daily AI Learning Coach: {html.escape(lesson.skill)}</span>
-        <span class="badge badge-primary">Agentic Revision Loop</span>
-      </div>
-
-      <div class="box-info" style="margin-bottom:1.5rem;">
-        <h3 style="color:#1e40af; font-size:1.15rem; margin-bottom:0.5rem;">{html.escape(lesson.title)}</h3>
-        <p style="font-size:0.92rem; color:#334155; margin-bottom:0.8rem;">{html.escape(lesson.concept_summary)}</p>
-        <div style="font-weight:600; font-size:0.88rem; color:#1e293b;">Key Takeaways:</div>
-        <ul class="bullet-list">
-          {"".join(f"<li>{html.escape(p)}</li>" for p in lesson.key_points)}
-        </ul>
-      </div>
-
-      <div class="card" style="background:var(--surface-alt); border:1px solid var(--border); box-shadow:none;">
-        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:0.75rem;">
-          <h4 style="color:#1e293b; font-size:1rem;">Daily Concept Assessment</h4>
-          <span style="font-size:0.82rem; color:var(--text-muted);">Skill: {html.escape(q.skill)}</span>
+      <div class="card-title"><span>Learn with your instructor</span><span class="badge badge-primary">Teaching only</span></div>
+      <div style="max-height:32rem; overflow-y:auto; padding:0.25rem 0;">{messages}</div>
+      <form method="post" action="/learning-coach/chat" style="margin-top:1rem;">
+        <div class="form-group"><label for="message">What should I teach you?</label>
+          <textarea id="message" name="message" rows="3" maxlength="2000" required placeholder="Example: Teach me SQL joins with a simple example."></textarea>
         </div>
-        <p style="font-size:1.05rem; font-weight:600; color:#0f172a; margin-bottom:1.25rem;">
-          {html.escape(q.question)}
-        </p>
-
-        <form method="post" action="/learning-coach/answer">
-          <input type="hidden" name="question_id" value="{q.question_id}">
-          <div class="form-group">
-            <label>Explain in your own words (or select a pre-fill test below):</label>
-            <textarea name="answer" rows="3" placeholder="Type your answer here..."></textarea>
-          </div>
-          <div style="display:flex; gap:0.6rem; flex-wrap:wrap;">
-            <button type="submit" class="btn">Submit Answer</button>
-            <button type="submit" name="quick_test" value="wrong" class="btn btn-secondary">
-              ⚡ Test Misconception ("POST retrieves data from database")
-            </button>
-            <button type="submit" name="quick_test" value="right" class="btn btn-secondary">
-              ⚡ Test Correct Answer ("POST submits data to create resources")
-            </button>
-          </div>
-        </form>
-      </div>
+        <button type="submit" class="btn">Ask instructor</button>
+      </form>
     </div>
     """
-    return render_page("AI Learning Coach", content, active_nav="coach", student=student)
+    return render_page("Instructor Chat", content, active_nav="coach", student=student)
+
+
+@app.post("/learning-coach/chat")
+def learning_coach_chat(request: Request, message: str = Form(...)):
+    svc = get_service()
+    student = get_current_student(request, svc)
+    if not student:
+        return RedirectResponse("/login", status_code=303)
+    history = svc.get_coach_history(student.student_id)
+    svc.ai_coach_respond(student.student_id, message, history)
+    return RedirectResponse("/learning-coach", status_code=303)
 
 
 @app.post("/learning-coach/answer", response_class=HTMLResponse)
@@ -1160,18 +1366,28 @@ def job_analyzer_analyze(request: Request, jd_text: str = Form(...)):
 # ----------------------------------------------------------- LEARNING PLAN (Section 12)
 
 @app.get("/learning-plan", response_class=HTMLResponse)
-def learning_plan_view(request: Request):
+def learning_plan_view(request: Request, topic: str = ""):
     svc = get_service()
     student = get_current_student(request, svc)
     if not student:
         return RedirectResponse("/login", status_code=303)
 
-    plan = svc.generate_learning_plan(student.student_id)
+    if topic:
+      plan = svc.select_learning_path(student.student_id, topic)
+    else:
+      run_id = svc._get_student_run_id(student.student_id)
+      stored = svc.store.latest(run_id, "learning_plan")
+      plan = LearningPlan(**stored) if stored else svc.generate_learning_plan(student.student_id)
     run_id = svc._get_student_run_id(student.student_id)
     stored_plan = svc.store.latest(run_id, "learning_plan")
     status = stored_plan.get("status", "WAITING_FOR_STUDENT") if stored_plan else plan.status
 
     badge_cls = "badge-verified" if status == "ACCEPTED" else "badge-waiting"
+    available_paths = [skill for skill in svc.get_assessment_topics(student.student_id) if skill not in plan.target_skills]
+    path_links = "".join(
+      f"<a class='path-option' href='/learning-plan?topic={html.escape(skill)}'><strong>{html.escape(skill)}</strong><span>Add this path</span></a>"
+      for skill in available_paths
+    ) or "<p style='color:var(--text-muted); font-size:0.88rem;'>All role paths are currently included.</p>"
 
     sched_rows = ""
     for item in plan.schedule:
@@ -1198,6 +1414,12 @@ def learning_plan_view(request: Request):
         <p style="font-size:0.88rem; color:#334155;">Target Focus Skills: <strong>{html.escape(", ".join(plan.target_skills))}</strong></p>
       </div>
 
+      <div class="card" style="background:var(--surface-alt); box-shadow:none; margin-top:1rem;">
+        <div class="card-title">Choose another path</div>
+        <p style="font-size:0.88rem; color:var(--text-muted); margin-bottom:0.75rem;">Selecting a path integrates it with your current plan and adds its practice structure below.</p>
+        <div class="path-list">{path_links}</div>
+      </div>
+
       <table>
         <thead>
           <tr><th>Day</th><th>Focus Topic</th><th>Actionable Objective</th></tr>
@@ -1206,6 +1428,7 @@ def learning_plan_view(request: Request):
           {sched_rows}
         </tbody>
       </table>
+      <div class="box-info" style="margin-top:1.25rem;"><strong>How to use this path:</strong> Start with the concept map, complete the applied practice, then take the matching assessment. Your instructor chat uses these same active topics.</div>
     </div>
     """
     return render_page("Learning Plan", content, active_nav="plan", student=student)
@@ -1288,6 +1511,18 @@ def profile_view(request: Request):
           <p style="font-weight:600;">{prof.graduation_year}</p>
         </div>
       </div>
+      <div class="box-info">
+        <strong>Learning context</strong>
+        <p style="font-size:0.88rem; color:#334155; margin-top:0.35rem;">{html.escape(prof.education_level)} · CGPA {prof.cgpa:g} · Resume {'available for analysis' if prof.resume_text else 'not uploaded'}</p>
+        <form method="post" action="/profile/update" enctype="multipart/form-data" style="margin-top:1rem;">
+          <div style="display:grid; grid-template-columns:1fr 1fr; gap:1rem;">
+            <div class="form-group"><label>Education Level</label><input type="text" name="education_level" value="{html.escape(prof.education_level)}"></div>
+            <div class="form-group"><label>CGPA / GPA</label><input type="number" name="cgpa" min="0" max="10" step="0.01" value="{prof.cgpa}"></div>
+          </div>
+          <div class="form-group"><label>Replace Resume (PDF or TXT)</label><input type="file" name="resume" accept=".pdf,.txt,application/pdf,text/plain"></div>
+          <button type="submit" class="btn">Save and re-analyze</button>
+        </form>
+      </div>
     </div>
 
     <div class="card">
@@ -1330,6 +1565,25 @@ def profile_view(request: Request):
     return render_page("Profile & Evidence", content, active_nav="profile", student=student)
 
 
+@app.post("/profile/update")
+async def profile_update(
+    request: Request,
+    education_level: str = Form("B.Tech"),
+    cgpa: float = Form(0.0),
+    resume: UploadFile | None = File(None),
+  ):
+    svc = get_service()
+    student = get_current_student(request, svc)
+    if not student:
+      return RedirectResponse("/login", status_code=303)
+    updates: dict[str, Any] = {"education_level": education_level.strip(), "cgpa": cgpa}
+    if resume and resume.filename:
+      updates["resume_text"] = extract_resume_text(resume.filename, await resume.read())
+    svc.update_student_profile(student.student_id, updates)
+    svc.analyze_resume_and_gaps_with_llm(student.student_id)
+    return RedirectResponse("/career-analysis", status_code=303)
+
+
 @app.post("/profile/add-project")
 def profile_add_project(request: Request, title: str = Form(...), desc: str = Form(...), skills: str = Form(...)):
     svc = get_service()
@@ -1347,6 +1601,31 @@ def profile_add_project(request: Request, title: str = Form(...), desc: str = Fo
     return RedirectResponse("/profile", status_code=303)
 
 
+# ----------------------------------------------------- RESOURCES
+
+@app.get("/resources", response_class=HTMLResponse)
+def resources_view(request: Request):
+    svc = get_service()
+    student = get_current_student(request, svc)
+    if not student:
+      return RedirectResponse("/login", status_code=303)
+    resources = svc.get_topic_resources(student.student_id)
+    tiles = []
+    for topic, items in resources.items():
+      links = "".join(
+        f"<a class='resource-link' href='{html.escape(item['url'])}' target='_blank' rel='noopener noreferrer'>"
+        f"<span class='badge badge-primary'>{html.escape(item['kind'])}</span> {html.escape(item['title'])}"
+        f"<small style='display:block; color:var(--text-muted); margin-top:0.2rem;'>{html.escape(item['source'])}</small></a>"
+        for item in items
+      )
+      tiles.append(f"<article class='resource-tile'><span class='badge badge-verified'>Role topic</span><h3>{html.escape(topic)}</h3>{links}</article>")
+    content = f"""
+    <div class="welcome-card"><div><h1>Learning Resources</h1><p style="color:var(--text-muted);">Curated references, courses, and books for your current role topics.</p></div><span class="role-tag">{html.escape(svc.get_active_career_goal(student.student_id).role)}</span></div>
+    <div class="resource-grid">{"".join(tiles)}</div>
+    """
+    return render_page("Resources", content, active_nav="resources", student=student)
+
+
 # ----------------------------------------------------- PROGRESS & TIMELINE (Section 14, 17)
 
 @app.get("/progress", response_class=HTMLResponse)
@@ -1356,7 +1635,46 @@ def progress_view(request: Request):
     if not student:
         return RedirectResponse("/login", status_code=303)
 
+    analytics = svc.get_progress_analytics(student.student_id)
     timeline = svc.get_activity_timeline(student.student_id)
+    counts = analytics["status_counts"]
+    total_status = max(sum(counts.values()), 1)
+    strong_end = counts["Strong"] / total_status * 100
+    developing_end = strong_end + counts["Developing"] / total_status * 100
+    weak_end = developing_end + counts["Weak"] / total_status * 100
+    pie_style = f"conic-gradient(#16a34a 0 {strong_end}%, #2563eb {strong_end}% {developing_end}%, #d97706 {developing_end}% {weak_end}%, #94a3b8 {weak_end}% 100%)"
+    legend = "".join(
+      f"<li><i style='--swatch:{color}'></i>{label}: {counts[label]}</li>"
+      for label, color in (("Strong", "#16a34a"), ("Developing", "#2563eb"), ("Weak", "#d97706"), ("Beginner", "#94a3b8"))
+    )
+    points = analytics["learning_rate"]
+    graph_points = []
+    graph_labels = []
+    for index, point in enumerate(points):
+      x = 35 if len(points) == 1 else 35 + index * (560 / (len(points) - 1))
+      y = 185 - (point["score"] / 100 * 145)
+      graph_points.append(f"{x:.1f},{y:.1f}")
+      graph_labels.append(f"<text x='{x:.1f}' y='215' text-anchor='middle' class='chart-label'>{html.escape(point['date'][5:])}</text>")
+    line_graph = (
+      f"<svg viewBox='0 0 620 230' role='img' aria-label='Learning rate by assessment date'>"
+      f"<line x1='35' y1='185' x2='595' y2='185' class='chart-axis'/><line x1='35' y1='40' x2='35' y2='185' class='chart-axis'/>"
+      f"<polyline points='{' '.join(graph_points) or '35,185'}' class='chart-line'/>"
+      + "".join(f"<circle cx='{p.split(',')[0]}' cy='{p.split(',')[1]}' r='4' class='chart-dot'/>" for p in graph_points)
+      + "".join(graph_labels) + "</svg>"
+    )
+    tree_nodes = []
+    for node in analytics["plan_nodes"]:
+      children = "".join(
+        f"<span class='tree-child'>{html.escape(child['label'])}</span>"
+        for child in node["children"]
+      )
+      tree_nodes.append(
+        f"<div class='tree-node'><strong>{html.escape(node['topic'])}</strong>"
+        f"<span class='tree-confidence'>{node['confidence']}% confidence</span>"
+        f"<span class='badge badge-primary' style='float:right;'>{html.escape(node['status'])}</span>"
+        f"<div class='tree-children'>{children}</div></div>"
+      )
+    tree = "".join(tree_nodes) or "<p style='color:var(--text-muted);'>Choose a learning path from the dashboard to build the tree.</p>"
     history_events = ""
     for ev in timeline:
         history_events += f"""
@@ -1371,16 +1689,30 @@ def progress_view(request: Request):
         </div>
         """
 
+    stale_topics = "".join(
+      f"<a class='refresh-topic' href='/assessment?topic={html.escape(topic)}' onclick=\"return confirm('Start a fresh {html.escape(topic)} assessment now?');\">{html.escape(topic)}<span>Click to take a refresh test</span></a>"
+      for topic in analytics["stale_topics"]
+    ) or "<p style='color:var(--text-muted); font-size:0.88rem;'>All required topics have recent assessment activity.</p>"
+    extras = ", ".join(analytics["extra_skills"]) or "No additional priority skills identified."
+    role_cards = "".join(f"<div class='role-fit-item'><strong>{html.escape(item['role'])}</strong><div class='meter-track' style='margin:0.45rem 0;'><div class='meter-bar' style='width:{item['fit']}%;'></div></div><span style='font-size:0.78rem; color:var(--text-muted);'>{item['fit']}% fit · {html.escape(item['evidence'])}</span></div>" for item in analytics["role_fit"])
     content = f"""
-    <div class="card">
-      <div class="card-title">Student Activity Timeline & Evidence Audit</div>
-      <p style="font-size:0.88rem; color:var(--text-muted); margin-bottom:1rem;">
-        Chronological audit log persisted to SQLite store, showing career progression and decisions.
-      </p>
-      <div>
-        {history_events if history_events else "<p style='color:var(--text-muted);'>No activity recorded yet.</p>"}
-      </div>
+    <div class="welcome-card"><div><h1>Progress & readiness</h1><p style="color:var(--text-muted);">A dated view of {html.escape(student.name)}'s movement toward the current career goal.</p></div><span class="role-tag">Evidence-based</span></div>
+    <div class="progress-grid">
+      <div class="progress-kpi"><strong>{analytics['completion']}%</strong><span>Required topics completed</span></div>
+      <div class="progress-kpi"><strong>{analytics['completed_assessments']}</strong><span>Assessments submitted</span></div>
+      <div class="progress-kpi"><strong>{analytics['activity_count']}</strong><span>Recorded learning events</span></div>
+      <div class="progress-kpi"><strong>{len(analytics['stale_topics'])}</strong><span>Topics needing a refresh</span></div>
     </div>
+    <div class="chart-grid">
+      <div class="card"><div class="card-title">Skill distribution</div><div class="pie-wrap"><div class="pie-chart" style="--pie:{pie_style};"></div><ul class="legend">{legend}</ul></div></div>
+      <div class="card"><div class="card-title">Learning rate by date</div><p style="font-size:0.82rem; color:var(--text-muted);">Average assessment score for each date with completed tests.</p><div class='line-chart'>{line_graph}</div></div>
+    </div>
+    <div class="card"><div class="card-title">Current learning path</div><p style="font-size:0.88rem; color:var(--text-muted); margin-bottom:1rem;">{html.escape(analytics['plan_title'])}. Each selected dashboard path is integrated into this tree.</p><div class='path-tree'>{tree}</div></div>
+    <div class="chart-grid">
+      <div class="card"><div class="card-title">Needs attention</div><div class="box-warn"><strong>Topics needing refresh</strong><div class='refresh-list'>{stale_topics}</div></div><div class="box-info"><strong>Extra skills to learn</strong><p style="margin-top:0.35rem; font-size:0.88rem;">{html.escape(extras)}</p></div></div>
+      <div class="card"><div class="card-title">Possible roles to apply for</div><p style="font-size:0.82rem; color:var(--text-muted); margin-bottom:0.75rem;">Fit is calculated from current assessed skills and resume evidence.</p><div class='role-fit'>{role_cards}</div></div>
+    </div>
+    <div class="card"><div class="card-title">Activity timeline</div><div>{history_events if history_events else "<p style='color:var(--text-muted);'>No activity recorded yet.</p>"}</div></div>
     """
     return render_page("Progress & Timeline", content, active_nav="progress", student=student)
 
@@ -1388,65 +1720,81 @@ def progress_view(request: Request):
 # ---------------------------------------------------------- ASSESSMENT (Section 7)
 
 @app.get("/assessment", response_class=HTMLResponse)
-def assessment_view(request: Request):
+def assessment_view(request: Request, topic: str = "", test_id: str = ""):
     svc = get_service()
     student = get_current_student(request, svc)
     if not student:
         return RedirectResponse("/login", status_code=303)
 
     goal = svc.get_active_career_goal(student.student_id)
-    questions = svc.generate_initial_assessment(student.student_id, goal.role)
+    topics = svc.get_assessment_topics(student.student_id)
+    scores = svc.get_topic_scores(student.student_id)
+    selected_test = svc.get_assessment_test(student.student_id, test_id) if test_id else None
+    if topic and not selected_test:
+        selected_test = svc.create_topic_assessment(student.student_id, topic)
+    if selected_test:
+        topic = selected_test["topic"]
 
-    q_cards = ""
-    for i, q in enumerate(questions, 1):
-        opts = "".join(f"""
-        <label style="display:block; margin:0.4rem 0; font-weight:normal; font-size:0.88rem; cursor:pointer;">
-          <input type="radio" name="ans_{q.question_id}" value="{html.escape(opt)}"> {html.escape(opt)}
-        </label>
-        """ for opt in q.options)
-
-        q_cards += f"""
-        <div class="box-info" style="background:#ffffff; border:1px solid var(--border); margin-bottom:1.25rem;">
-          <span class="badge badge-primary" style="margin-bottom:0.4rem;">Question {i} — {html.escape(q.skill)}</span>
-          <p style="font-size:0.98rem; font-weight:600; color:#0f172a; margin:0.4rem 0 0.75rem;">{html.escape(q.question)}</p>
-          {opts}
-        </div>
-        """
+    topic_rows = "".join(
+        f"<a class='assessment-topic {'selected' if skill == topic else ''}' href='/assessment?topic={html.escape(skill)}'>"
+        f"<span>{html.escape(skill)}</span><strong>{('-' if scores.get(skill) is None else str(scores[skill]) + '%')}</strong></a>"
+        for skill in topics
+    )
+    question_cards = ""
+    if selected_test:
+        for index, question in enumerate(selected_test["questions"], 1):
+            options = "".join(
+                f"<label class='assessment-option'><input type='radio' name='answer_{question['question_id']}' value='{html.escape(option)}' required> {html.escape(option)}</label>"
+                for option in question["options"]
+            )
+            question_cards += f"<div class='assessment-question'><span class='badge badge-primary'>Question {index} of 10</span><h3>{html.escape(question['question'])}</h3>{options}</div>"
+        test_panel = f"""
+        <div class="card assessment-test">
+          <div class="card-title"><span>{html.escape(topic)} assessment</span><span class="badge badge-primary">Attempt {selected_test['attempt']}</span></div>
+          <p style="font-size:0.88rem; color:var(--text-muted); margin-bottom:1rem;">Ten fresh questions. Submit when you have answered every question.</p>
+          <form method="post" action="/assessment/submit">
+            <input type="hidden" name="test_id" value="{html.escape(selected_test['test_id'])}">
+            {question_cards}
+            <button type="submit" class="btn">Submit {html.escape(topic)} test</button>
+          </form>
+        </div>"""
+    else:
+        test_panel = "<div class='card'><div class='box-info'><strong>Select a topic to begin.</strong><p>Each topic opens a new ten-question test and stores the latest score beside the topic.</p></div></div>"
 
     content = f"""
-    <div class="card">
-      <div class="card-title">Initial Role Diagnostic Assessment: {html.escape(goal.role)}</div>
-      <p style="font-size:0.88rem; color:var(--text-muted); margin-bottom:1.25rem;">
-        Assess your foundational knowledge across the required skills for this role.
-      </p>
-      <form method="post" action="/assessment/submit">
-        {q_cards}
-        <button type="submit" class="btn">Submit Assessment Answers &rarr;</button>
-      </form>
-    </div>
+    <div class="welcome-card"><div><h1>Role Assessments</h1><p style="color:var(--text-muted);">Choose a required {html.escape(goal.role)} topic and test your understanding.</p></div><span class="role-tag">10 questions per attempt</span></div>
+    <div class="assessment-layout"><aside class="card assessment-sidebar"><div class="card-title">Required topics</div><p style="font-size:0.82rem; color:var(--text-muted); margin-bottom:0.75rem;">Latest score</p>{topic_rows}</aside><section>{test_panel}</section></div>
     """
     return render_page("Diagnostic Assessment", content, active_nav="assessment", student=student)
 
 
 @app.post("/assessment/submit", response_class=HTMLResponse)
-def assessment_submit(request: Request):
+async def assessment_submit(request: Request):
     svc = get_service()
     student = get_current_student(request, svc)
     if not student:
         return RedirectResponse("/login", status_code=303)
 
-    content = """
+    form = await request.form()
+    test_id = str(form.get("test_id", ""))
+    test = svc.get_assessment_test(student.student_id, test_id)
+    answers = {question["question_id"]: str(form.get(f"answer_{question['question_id']}", "")) for question in (test or {}).get("questions", [])}
+    result = svc.submit_topic_assessment(student.student_id, test_id, answers)
+
+    content = f"""
     <div class="card">
       <div class="card-title" style="color:var(--success);">Diagnostic Assessment Evaluated!</div>
       <div class="box-success">
         <p style="font-size:0.95rem; font-weight:600; color:#15803d; margin-bottom:0.35rem;">
-          Responses graded and skill profile updated in SQLite store.
+          You scored {result['score']}% ({result['correct']}/{result['total']}).
         </p>
         <p style="font-size:0.88rem; color:#334155;">
-          Scores and detected misconceptions have been saved to your durable profile.
+          Review the explanations below, then ask the AI Coach about any topic that still feels unclear.
         </p>
       </div>
-      <a href="/" class="btn" style="margin-top:1rem;">View Updated Dashboard &rarr;</a>
+      {''.join(f"<div class='box-info'><strong>{html.escape(q['skill'])}:</strong> {html.escape(q['explanation'])}</div>" for q in (test or {}).get('questions', []))}
+      <a href="/assessment" class="btn" style="margin-top:1rem;">Back to topics</a>
+      <a href="/assessment?topic={html.escape(result['topic'])}" class="btn btn-secondary" style="margin-top:1rem;">Try a fresh test</a>
     </div>
     """
     return render_page("Assessment Result", content, active_nav="assessment", student=student)
