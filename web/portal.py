@@ -1254,6 +1254,9 @@ def job_opportunities_view(request: Request, notice: str = "", error: str = ""):
     except PlacementPortalError as exc:
         jobs = []
         error = str(exc)
+    except Exception as exc:
+      jobs = []
+      error = f"Placement portal is unavailable: {exc}"
 
     notice_html = f"<div class='toast-success' role='status'>Application applied successfully: {html.escape(notice)}</div>" if notice else ""
     error_html = f"<div class='toast-error' role='alert'>{html.escape(error)}</div>" if error else ""
@@ -1375,6 +1378,8 @@ def job_opportunities_decision(
         return RedirectResponse(f"/job-opportunities?notice={html.escape(message)}", status_code=303)
       except PlacementPortalError as exc:
         return RedirectResponse(f"/job-opportunities?error={html.escape(str(exc))}", status_code=303)
+      except Exception as exc:
+        return RedirectResponse(f"/job-opportunities?error=Application could not be completed: {html.escape(str(exc))}", status_code=303)
     return RedirectResponse(f"/job-opportunities?notice=No application started for {html.escape(job_id)}.", status_code=303)
 
 
