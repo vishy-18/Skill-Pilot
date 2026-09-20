@@ -49,15 +49,67 @@ def get_current_student(request: Request, svc: NavigatorService) -> Any:
 
 
 def extract_resume_text(filename: str, content: bytes) -> str:
-    """Extract resume text while keeping the original upload out of SQLite."""
-    if filename.lower().endswith(".pdf"):
+    """Extract resume text using multi-engine PDF extractors (PyMuPDF, PyPDF, text fallback)."""
+    if not content:
+        return ""
+    
+    # Check if PDF by extension or magic bytes %PDF
+    if filename.lower().endswith(".pdf") or content.startswith(b"%PDF"):
+        # Engine 1: PyMuPDF (pymupdf / fitz)
+        try:
+            import pymupdf
+            doc = pymupdf.open(stream=content, filetype="pdf")
+            pages = [page.get_text() for page in doc]
+            text = "\n".join(p for p in pages if p)
+            if text.strip():
+                return text[:15000]
+        except Exception:
+            pass
+
+        try:
+            import fitz
+            doc = fitz.open(stream=content, filetype="pdf")
+            pages = [page.get_text() for page in doc]
+            text = "\n".join(p for p in pages if p)
+            if text.strip():
+                return text[:15000]
+        except Exception:
+            pass
+
+        # Engine 2: pypdf
         try:
             from pypdf import PdfReader
             reader = PdfReader(io.BytesIO(content))
-            return "\n".join(page.extract_text() or "" for page in reader.pages)[:12000]
+            pages = [page.extract_text() or "" for page in reader.pages]
+            text = "\n".join(p for p in pages if p)
+            if text.strip():
+                return text[:15000]
         except Exception:
-            return ""
-    return content.decode("utf-8", errors="ignore")[:12000]
+            pass
+
+        # Engine 3: regex stream extraction for uncompressed streams
+        try:
+            import re
+            strings = re.findall(rb"\(([^\(\)]+)\)\s*Tj", content)
+            if strings:
+                text = " ".join(s.decode("latin1", errors="ignore") for s in strings)
+                if len(text.strip()) > 40:
+                    return text[:15000]
+        except Exception:
+            pass
+
+    # Engine 4: Plain text / UTF-8 / Latin-1 decode
+    try:
+        decoded = content.decode("utf-8")
+        if decoded.strip():
+            return decoded[:15000]
+    except Exception:
+        pass
+
+    try:
+        return content.decode("latin-1", errors="ignore")[:15000]
+    except Exception:
+        return ""
 
 
 def render_chat_markdown(text: str) -> str:
@@ -716,6 +768,228 @@ tr:hover td {{
   left: 0.2rem;
   font-weight: bold;
 }}
+
+/* ATS Resume Builder & Paper Styling */
+.resume-section-card {{
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 1.5rem 1.75rem;
+  margin-bottom: 1.5rem;
+  box-shadow: var(--shadow-sm);
+}}
+.resume-section-header {{
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 0.75rem;
+  margin-bottom: 1.25rem;
+}}
+.resume-section-header h3 {{
+  font-family: 'Outfit', sans-serif;
+  font-size: 1.15rem;
+  color: #1e3a8a;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}}
+.resume-paper-wrapper {{
+  display: flex;
+  justify-content: center;
+  margin: 1.5rem 0 3rem;
+}}
+.resume-paper {{
+  background: #ffffff;
+  width: 100%;
+  max-width: 850px;
+  min-height: 1100px;
+  padding: 3rem 3.5rem;
+  box-shadow: var(--shadow-lg), 0 0 0 1px rgba(0,0,0,0.06);
+  border-radius: 4px;
+  color: #111827;
+  font-family: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
+  line-height: 1.5;
+}}
+.resume-doc-name {{
+  font-family: 'Outfit', sans-serif;
+  font-size: 1.85rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #0f172a;
+  text-align: center;
+  margin-bottom: 0.35rem;
+}}
+.resume-doc-contact {{
+  text-align: center;
+  font-size: 0.86rem;
+  color: #475569;
+  margin-bottom: 1.4rem;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 0.6rem;
+}}
+.resume-doc-contact a {{
+  color: #2563eb;
+  text-decoration: none;
+}}
+.resume-doc-contact span.sep {{
+  color: #cbd5e1;
+}}
+.resume-doc-sec-title {{
+  font-family: 'Outfit', sans-serif;
+  font-size: 0.95rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: #1e3a8a;
+  border-bottom: 1.5px solid #1e3a8a;
+  padding-bottom: 0.25rem;
+  margin: 1.25rem 0 0.65rem;
+}}
+.resume-doc-entry {{
+  margin-bottom: 0.85rem;
+}}
+.resume-doc-entry-header {{
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  font-size: 0.9rem;
+}}
+.resume-doc-entry-title {{
+  font-weight: 700;
+  color: #0f172a;
+}}
+.resume-doc-entry-subtitle {{
+  color: #334155;
+  font-weight: 600;
+}}
+.resume-doc-entry-date {{
+  font-size: 0.82rem;
+  color: #64748b;
+  font-weight: 500;
+}}
+.resume-doc-bullets {{
+  margin-top: 0.3rem;
+  padding-left: 1.25rem;
+  list-style-type: disc;
+}}
+.resume-doc-bullets li {{
+  font-size: 0.86rem;
+  color: #334155;
+  margin-bottom: 0.25rem;
+  line-height: 1.45;
+}}
+.resume-doc-skill-group {{
+  font-size: 0.86rem;
+  margin-bottom: 0.35rem;
+  color: #334155;
+}}
+.resume-doc-skill-group strong {{
+  color: #0f172a;
+}}
+.resume-action-bar {{
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 1rem 1.5rem;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 1rem;
+  margin-bottom: 1.5rem;
+  box-shadow: var(--shadow-sm);
+}}
+.chip-group {{
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-top: 0.5rem;
+}}
+.chip-btn {{
+  background: var(--surface-alt);
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  padding: 0.25rem 0.65rem;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--primary);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}}
+.chip-btn:hover {{
+  background: var(--primary-light);
+  border-color: var(--primary-border);
+}}
+
+/* Modal Styling */
+.modal-overlay {{
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.6);
+  backdrop-filter: blur(3px);
+  display: none;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  padding: 1rem;
+}}
+.modal-overlay.active {{
+  display: flex;
+}}
+.modal-box {{
+  background: #ffffff;
+  border-radius: 12px;
+  width: 100%;
+  max-width: 34rem;
+  padding: 2rem;
+  box-shadow: var(--shadow-lg);
+  border: 1px solid var(--border);
+  position: relative;
+}}
+.modal-title {{
+  font-family: 'Outfit', sans-serif;
+  font-size: 1.35rem;
+  color: #1e3a8a;
+  margin-bottom: 0.35rem;
+}}
+
+/* Print Styles */
+@media print {{
+  body {{
+    background: #ffffff !important;
+    color: #000000 !important;
+    padding: 0 !important;
+    margin: 0 !important;
+  }}
+  nav, .nav-menu, .nav-account, .user-pill, .resume-action-bar, .welcome-card, .toast-success, .toast-error, .modal-overlay, .btn, .card:not(.resume-paper-wrapper), .box-info, .brand-group {{
+    display: none !important;
+  }}
+  .container {{
+    margin: 0 !important;
+    padding: 0 !important;
+    max-width: 100% !important;
+  }}
+  .resume-paper-wrapper {{
+    margin: 0 !important;
+    padding: 0 !important;
+    display: block !important;
+  }}
+  .resume-paper {{
+    box-shadow: none !important;
+    border: none !important;
+    padding: 0.4in 0.5in !important;
+    max-width: 100% !important;
+    min-height: auto !important;
+  }}
+  @page {{
+    margin: 0.3in;
+    size: portrait;
+  }}
+}}
 </style>
 </head>
 <body class="{layout_class}">
@@ -747,6 +1021,7 @@ def render_page(
         nav_links = f"""
         <li><a href="/" class="{'active' if active_nav=='dashboard' else ''}">▦ &nbsp; Dashboard</a></li>
         <li><a href="/career-analysis" class="{'active' if active_nav=='analysis' else ''}">⌁ &nbsp; Career Analysis</a></li>
+        <li><a href="/resume-builder" class="{'active' if active_nav=='resume' else ''}">📄 &nbsp; Resume Builder</a></li>
         <li><a href="/career-goals" class="{'active' if active_nav=='goals' else ''}">◎ &nbsp; Career Goals</a></li>
         <li><a href="/job-opportunities" class="{'active' if active_nav=='opportunities' else ''}">⌖ &nbsp; Job Opportunities</a></li>
         <li><a href="/learning-coach" class="{'active' if active_nav=='coach' else ''}">✦ &nbsp; AI Coach</a></li>
@@ -794,7 +1069,7 @@ def login_page(error: str = ""):
         <div style="text-align:center; margin-bottom:1.5rem;">
           <div class="brand-badge" style="display:inline-block; margin-bottom:0.75rem;">SKILL-PILOT</div>
           <h2 style="font-family:'Outfit',sans-serif; color:#1e3a8a; font-size:1.6rem;">Student Portal Login</h2>
-          <p style="color:var(--text-muted); font-size:0.9rem; margin-top:0.25rem;">Access your persistent career learning profile</p>
+          <p style="color:var(--text-muted); font-size:0.9rem; margin-top:0.25rem;">Access your personalized career learning profile</p>
         </div>
 
         {error_banner}
@@ -802,23 +1077,18 @@ def login_page(error: str = ""):
         <form method="post" action="/login">
           <div class="form-group">
             <label>Student Email Address</label>
-            <input type="email" name="email" value="arun@college.edu" required autofocus>
+            <input type="email" name="email" placeholder="e.g. student@college.edu" required autofocus>
           </div>
           <div class="form-group">
             <label>Password</label>
-            <input type="password" name="password" value="secret" required>
+            <input type="password" name="password" placeholder="Enter your password" required>
           </div>
           <button type="submit" class="btn" style="width:100%; padding:0.75rem; margin-top:0.5rem;">Sign In to Portal &rarr;</button>
         </form>
 
         <div style="margin-top: 1.5rem; padding-top: 1.25rem; border-top: 1px solid var(--border); text-align:center;">
-          <form method="post" action="/login/demo">
-            <button type="submit" class="btn btn-secondary" style="width:100%; font-size:0.85rem;">
-              ⚡ One-Click Demo Login as Arun (NIT '27)
-            </button>
-          </form>
-          <p style="font-size:0.85rem; color:var(--text-muted); margin-top:1rem;">
-            New student? <a href="/register" style="color:var(--primary); font-weight:600;">Create account here</a>
+          <p style="font-size:0.9rem; color:var(--text-muted); margin:0;">
+            New student? <a href="/register" style="color:var(--primary); font-weight:600;">Create an account here</a>
           </p>
         </div>
       </div>
@@ -826,7 +1096,7 @@ def login_page(error: str = ""):
     """
     return HTMLResponse(BASE_TEMPLATE.format(
         title="Student Login",
-        nav_links="<li><a href='/login' class='active'>Login</a></li><li><a href='/register'>Register</a></li><li><a href='/demo'>20-Step Demo</a></li>",
+        nav_links="<li><a href='/login' class='active'>Login</a></li><li><a href='/register'>Register</a></li>",
         user_pill="<a href='/register' class='btn btn-secondary' style='font-size:0.85rem; padding:0.4rem 0.9rem;'>Register</a>",
         content=content,
         layout_class="auth-shell",
@@ -838,7 +1108,7 @@ def handle_login(email: str = Form(...), password: str = Form(...)):
     svc = get_service()
     student = svc.login_student(email.strip(), password)
     if not student:
-        return RedirectResponse("/login?error=Invalid+email+or+password", status_code=303)
+        return RedirectResponse("/login?error=Invalid+email+or+password.+Please+check+your+credentials+or+register.", status_code=303)
     resp = RedirectResponse("/", status_code=303)
     resp.set_cookie("session_student_id", student.student_id, max_age=86400, httponly=True)
     return resp
@@ -846,9 +1116,7 @@ def handle_login(email: str = Form(...), password: str = Form(...)):
 
 @app.post("/login/demo")
 def handle_demo_login():
-    resp = RedirectResponse("/", status_code=303)
-    resp.set_cookie("session_student_id", "std_arun", max_age=86400, httponly=True)
-    return resp
+    return RedirectResponse("/login", status_code=303)
 
 
 @app.get("/logout")
@@ -1886,9 +2154,12 @@ async def profile_update(
       return RedirectResponse("/login", status_code=303)
     updates: dict[str, Any] = {"education_level": education_level.strip(), "cgpa": cgpa}
     if resume and resume.filename:
-      updates["resume_text"] = extract_resume_text(resume.filename, await resume.read())
+        updates["resume_text"] = extract_resume_text(resume.filename, await resume.read())
+        svc.clear_ats_resume_draft(student.student_id)
     svc.update_student_profile(student.student_id, updates)
     svc.analyze_resume_and_gaps_with_llm(student.student_id)
+    if updates.get("resume_text"):
+        svc.extract_resume_fields_for_builder(student.student_id)
     return RedirectResponse("/career-analysis", status_code=303)
 
 
@@ -2243,3 +2514,782 @@ def demo_runner_view(request: Request):
     </div>
     """
     return render_page("20-Step Demo", content, active_nav="demo", student=student)
+
+
+# ------------------------------------------------------------- ATS RESUME BUILDER (AI AGENT POWERED)
+
+@app.get("/resume-builder", response_class=HTMLResponse)
+def resume_builder_form_view(request: Request):
+    svc = get_service()
+    student = get_current_student(request, svc)
+    if not student:
+        return RedirectResponse("/login", status_code=303)
+
+    # Prefill from latest draft if exists, else from profile/resume
+    draft = svc.get_latest_ats_resume_draft(student.student_id)
+    if draft and draft.get("data"):
+        data = draft["data"]
+    else:
+        data = svc.extract_resume_fields_for_builder(student.student_id)
+
+    # Convert lists to comma/newline separated for inputs
+    lang_str = ", ".join(data.get("skills_languages", []))
+    fw_str = ", ".join(data.get("skills_frameworks", []))
+    tools_str = ", ".join(data.get("skills_tools", []))
+    core_str = ", ".join(data.get("skills_core", []))
+
+    edu = data.get("education", [{}])[0] if data.get("education") else {}
+    edu_degree_val = edu.get("degree") or (f"{student.education_level} in {student.department}" if student.department else student.education_level)
+    edu_inst_val = edu.get("institution") or student.college
+    edu_year_val = str(edu.get("graduation_year") or student.graduation_year or "")
+    edu_gpa_val = str(edu.get("cgpa_or_grade") or (f"{student.cgpa:.2f}" if student.cgpa > 0 else ""))
+
+    exp = data.get("experience", [{}])[0] if data.get("experience") else {}
+    exp_role_val = exp.get("role", "")
+    exp_company_val = exp.get("company", "")
+    exp_loc_val = exp.get("location", "")
+    exp_dur_val = exp.get("duration", "")
+    exp_bullets = "\n".join(exp.get("bullet_points", []))
+
+    projs = data.get("projects", [])
+    proj1 = projs[0] if len(projs) > 0 else {}
+    proj1_title_val = proj1.get("title", "")
+    proj1_tech_val = proj1.get("tech_stack", "")
+    proj1_github_val = proj1.get("github_url", "")
+    proj1_bullets = "\n".join(proj1.get("bullet_points", []))
+
+    proj2 = projs[1] if len(projs) > 1 else {}
+    proj2_title_val = proj2.get("title", "")
+    proj2_tech_val = proj2.get("tech_stack", "")
+    proj2_github_val = proj2.get("github_url", "")
+    proj2_bullets = "\n".join(proj2.get("bullet_points", []))
+
+    certs_str = "\n".join(data.get("certifications", []))
+
+    role_options = "".join(
+        f"<option value='{r}' {'selected' if r == data.get('target_role') else ''}>{r}</option>"
+        for r in ROLE_SKILLS.keys()
+    )
+
+    error_msg = data.get("error_message", "")
+    alert_banner = ""
+    popup_script = ""
+    if error_msg:
+        alert_banner = f"""
+        <div class="box-danger" style="margin-bottom:1.5rem; display:flex; align-items:flex-start; gap:14px; background:rgba(239,68,68,0.12); border:1.5px solid rgba(239,68,68,0.45); border-radius:12px; padding:16px;">
+          <span style="font-size:1.8rem; line-height:1;">⚠️</span>
+          <div>
+            <strong style="color:var(--danger, #ef4444); font-size:1.05rem;">Resume Extraction Alert (Strict No-Fallback Mode)</strong>
+            <p style="margin:4px 0 0 0; color:var(--text); font-size:0.92rem;">{html.escape(error_msg)}</p>
+            <p style="margin:6px 0 0 0; font-size:0.85rem; color:var(--text-muted);">Please upload your resume PDF in <a href="/profile" style="color:var(--primary); text-decoration:underline;">Profile</a> or during Registration to enable complete AI autofill.</p>
+          </div>
+        </div>
+        """
+        escaped_js_msg = html.escape(error_msg).replace('"', '\\"').replace("'", "\\'").replace("\n", " ")
+        popup_script = f"""
+        <script>
+          window.addEventListener('DOMContentLoaded', function() {{
+            setTimeout(function() {{
+              alert("⚠️ RESUME EXTRACTION NOTICE:\\n\\n{escaped_js_msg}\\n\\nPlease upload your resume PDF in Registration or Profile to enable full AI extraction without fallback.");
+            }}, 300);
+          }});
+        </script>
+        """
+
+    content = f"""
+    {alert_banner}
+    <div class="welcome-card">
+      <div>
+        <h1>ATS-Friendly Resume Builder</h1>
+        <p style="color:var(--text-muted);">
+          Craft a high-scoring, ATS-compliant resume tailored to your target role using our AI Career Agent.
+        </p>
+      </div>
+      <span class="role-tag">AI-Powered ATS Engine</span>
+    </div>
+
+    <div class="box-info" style="margin-bottom:1.5rem;">
+      <strong>⚡ Autofilled from your profile & uploaded resume:</strong>
+      All fields below are prefilled with your extracted data. Review and adjust any section, then click <strong>Build Resume</strong> to generate your optimized ATS preview.
+    </div>
+
+    <form method="post" action="/resume-builder/build">
+      
+      <!-- 1. Target Role & Style -->
+      <div class="resume-section-card">
+        <div class="resume-section-header">
+          <h3>🎯 1. Target Career Role</h3>
+          <span class="badge badge-primary">Role Optimization</span>
+        </div>
+        <div class="form-group">
+          <label>Target Job Role (Agent will optimize keywords & action verbs for this pathway)</label>
+          <select name="target_role" required>
+            {role_options}
+          </select>
+        </div>
+      </div>
+
+      <!-- 2. Contact Information -->
+      <div class="resume-section-card">
+        <div class="resume-section-header">
+          <h3>👤 2. Personal & Contact Information</h3>
+          <span class="badge badge-verified">ATS Header Standard</span>
+        </div>
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:1rem;">
+          <div class="form-group">
+            <label>Full Name</label>
+            <input type="text" name="full_name" value="{html.escape(data.get('full_name', ''))}" required>
+          </div>
+          <div class="form-group">
+            <label>Email Address</label>
+            <input type="email" name="email" value="{html.escape(data.get('email', ''))}" required>
+          </div>
+        </div>
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:1rem;">
+          <div class="form-group">
+            <label>Phone Number</label>
+            <input type="text" name="phone" value="{html.escape(data.get('phone', ''))}" placeholder="+91 98765 43210">
+          </div>
+          <div class="form-group">
+            <label>Location (City, State / Country)</label>
+            <input type="text" name="location" value="{html.escape(data.get('location', ''))}" placeholder="Chennai, India">
+          </div>
+        </div>
+        
+      </div>
+
+      <!-- 3. Professional Summary -->
+      <div class="resume-section-card">
+        <div class="resume-section-header">
+          <h3>📝 3. Professional Summary</h3>
+          <span class="badge badge-primary">Keyword Rich</span>
+        </div>
+        <div class="form-group">
+          <label>Summary Statement (Agent will enhance with impact-driven action verbs)</label>
+          <textarea name="summary" rows="3">{html.escape(data.get('summary', ''))}</textarea>
+          <p style="font-size:0.8rem; color:var(--text-muted); margin-top:0.3rem;">Concise 2-3 sentences highlighting education, technical proficiency, and career objectives.</p>
+        </div>
+      </div>
+
+      <!-- 4. Technical Skills -->
+      <div class="resume-section-card">
+        <div class="resume-section-header">
+          <h3>⚡ 4. Technical Skills & Core Competencies</h3>
+          <span class="badge badge-verified">ATS Parsable Taxonomies</span>
+        </div>
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:1rem;">
+          <div class="form-group">
+            <label>Programming Languages (comma-separated)</label>
+            <input type="text" name="skills_languages" value="{html.escape(lang_str)}" placeholder="Python, SQL, JavaScript, C++">
+          </div>
+          <div class="form-group">
+            <label>Frameworks & Libraries (comma-separated)</label>
+            <input type="text" name="skills_frameworks" value="{html.escape(fw_str)}" placeholder="FastAPI, React, Django, Node.js">
+          </div>
+        </div>
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:1rem;">
+          <div class="form-group">
+            <label>Developer Tools & Databases (comma-separated)</label>
+            <input type="text" name="skills_tools" value="{html.escape(tools_str)}" placeholder="Git, Docker, PostgreSQL, Linux, AWS">
+          </div>
+          <div class="form-group">
+            <label>Core CS Concepts & Methodologies (comma-separated)</label>
+            <input type="text" name="skills_core" value="{html.escape(core_str)}" placeholder="DSA, REST APIs, Database Design, CI/CD">
+          </div>
+        </div>
+      </div>
+
+      <!-- 5. Education -->
+      <div class="resume-section-card">
+        <div class="resume-section-header">
+          <h3>🎓 5. Education</h3>
+          <span class="badge badge-verified">Academic Credentials</span>
+        </div>
+        <div style="display:grid; grid-template-columns:2fr 2fr 1fr 1fr; gap:1rem;">
+          <div class="form-group">
+            <label>Degree & Major</label>
+            <input type="text" name="edu_degree" value="{html.escape(edu_degree_val)}">
+          </div>
+          <div class="form-group">
+            <label>College / University</label>
+            <input type="text" name="edu_institution" value="{html.escape(edu_inst_val)}">
+          </div>
+          <div class="form-group">
+            <label>Grad Year / Dates</label>
+            <input type="text" name="edu_year" value="{html.escape(edu_year_val)}">
+          </div>
+          <div class="form-group">
+            <label>CGPA / Grade</label>
+            <input type="text" name="edu_gpa" value="{html.escape(edu_gpa_val)}">
+          </div>
+        </div>
+      </div>
+
+      <!-- 6. Work / Internship Experience -->
+      <div class="resume-section-card">
+        <div class="resume-section-header">
+          <h3>💼 6. Internship / Work Experience</h3>
+          <span class="badge badge-primary">XYZ Impact Format</span>
+        </div>
+        <div style="display:grid; grid-template-columns:1fr 1fr 1fr 1fr; gap:1rem;">
+          <div class="form-group">
+            <label>Job Title / Role</label>
+            <input type="text" name="exp_role" value="{html.escape(exp_role_val)}">
+          </div>
+          <div class="form-group">
+            <label>Company / Organization</label>
+            <input type="text" name="exp_company" value="{html.escape(exp_company_val)}">
+          </div>
+          <div class="form-group">
+            <label>Location</label>
+            <input type="text" name="exp_location" value="{html.escape(exp_loc_val)}">
+          </div>
+          <div class="form-group">
+            <label>Duration / Dates</label>
+            <input type="text" name="exp_duration" value="{html.escape(exp_dur_val)}">
+          </div>
+        </div>
+        <div class="form-group">
+          <label>Achievements & Bullet Points (One per line)</label>
+          <textarea name="exp_bullets" rows="3" placeholder="• Collaborated with engineering team to build REST APIs&#10;• Decreased response latency by 28% through query indexing">{html.escape(exp_bullets)}</textarea>
+        </div>
+      </div>
+
+      <!-- 7. Projects -->
+      <div class="resume-section-card">
+        <div class="resume-section-header">
+          <h3>🚀 7. Key Projects</h3>
+          <span class="badge badge-verified">Technical Proof</span>
+        </div>
+        <!-- Project 1 -->
+        <div style="background:var(--surface-alt); padding:1rem 1.25rem; border-radius:8px; margin-bottom:1rem; border:1px solid var(--border);">
+          <div style="display:grid; grid-template-columns:2fr 2fr 2fr; gap:1rem;">
+            <div class="form-group">
+              <label>Project 1 Title</label>
+              <input type="text" name="proj1_title" value="{html.escape(proj1_title_val)}">
+            </div>
+            <div class="form-group">
+              <label>Tech Stack</label>
+              <input type="text" name="proj1_tech" value="{html.escape(proj1_tech_val)}">
+            </div>
+            <div class="form-group">
+              <label>GitHub URL (optional)</label>
+              <input type="text" name="proj1_github" value="{html.escape(proj1_github_val)}">
+            </div>
+          </div>
+          <div class="form-group" style="margin-bottom:0;">
+            <label>Bullet Points / Impact (One per line)</label>
+            <textarea name="proj1_bullets" rows="3">{html.escape(proj1_bullets)}</textarea>
+          </div>
+        </div>
+
+        <!-- Project 2 -->
+        <div style="background:var(--surface-alt); padding:1rem 1.25rem; border-radius:8px; border:1px solid var(--border);">
+          <div style="display:grid; grid-template-columns:2fr 2fr 2fr; gap:1rem;">
+            <div class="form-group">
+              <label>Project 2 Title</label>
+              <input type="text" name="proj2_title" value="{html.escape(proj2_title_val)}">
+            </div>
+            <div class="form-group">
+              <label>Tech Stack</label>
+              <input type="text" name="proj2_tech" value="{html.escape(proj2_tech_val)}">
+            </div>
+            <div class="form-group">
+              <label>GitHub URL (optional)</label>
+              <input type="text" name="proj2_github" value="{html.escape(proj2_github_val)}">
+            </div>
+          </div>
+          <div class="form-group" style="margin-bottom:0;">
+            <label>Bullet Points / Impact (One per line)</label>
+            <textarea name="proj2_bullets" rows="2">{html.escape(proj2_bullets)}</textarea>
+          </div>
+        </div>
+      </div>
+
+      <!-- 8. Certifications -->
+      <div class="resume-section-card">
+        <div class="resume-section-header">
+          <h3>🏆 8. Certifications & Achievements</h3>
+          <span class="badge badge-primary">Credential Verification</span>
+        </div>
+        <div class="form-group">
+          <label>Certifications (One per line)</label>
+          <textarea name="certifications" rows="2">{html.escape(certs_str)}</textarea>
+        </div>
+      </div>
+
+      <!-- Submit Action -->
+      <div style="display:flex; justify-content:flex-end; gap:1rem; margin-top:2rem; padding-top:1.5rem; border-top:1px solid var(--border);">
+        <a href="/" class="btn btn-secondary">Cancel</a>
+        <button type="submit" class="btn btn-success" style="font-size:1rem; padding:0.75rem 2rem;">
+          ✨ Build Resume &rarr;
+        </button>
+      </div>
+    </form>
+    {popup_script}
+    """
+    return render_page("ATS Resume Builder", content, active_nav="resume", student=student)
+
+
+@app.post("/resume-builder/build")
+async def resume_builder_handle_build(
+    request: Request,
+    target_role: str = Form("Software Engineering Intern"),
+    full_name: str = Form(""),
+    email: str = Form(""),
+    phone: str = Form(""),
+    location: str = Form(""),
+    linkedin_url: str = Form(""),
+    github_url: str = Form(""),
+    portfolio_url: str = Form(""),
+    summary: str = Form(""),
+    skills_languages: str = Form(""),
+    skills_frameworks: str = Form(""),
+    skills_tools: str = Form(""),
+    skills_core: str = Form(""),
+    edu_degree: str = Form(""),
+    edu_institution: str = Form(""),
+    edu_year: str = Form(""),
+    edu_gpa: str = Form(""),
+    exp_role: str = Form(""),
+    exp_company: str = Form(""),
+    exp_location: str = Form(""),
+    exp_duration: str = Form(""),
+    exp_bullets: str = Form(""),
+    proj1_title: str = Form(""),
+    proj1_tech: str = Form(""),
+    proj1_bullets: str = Form(""),
+    proj1_github: str = Form(""),
+    proj2_title: str = Form(""),
+    proj2_tech: str = Form(""),
+    proj2_bullets: str = Form(""),
+    proj2_github: str = Form(""),
+    certifications: str = Form(""),
+):
+    svc = get_service()
+    student = get_current_student(request, svc)
+    if not student:
+        return RedirectResponse("/login", status_code=303)
+
+    # Parse and structure inputs
+    def split_comma(text: str) -> list[str]:
+        return [s.strip() for s in text.split(",") if s.strip()]
+
+    def split_lines(text: str) -> list[str]:
+        return [line.strip().lstrip("•-* ") for line in text.split("\n") if line.strip()]
+
+    experience = []
+    if exp_role or exp_company:
+        experience.append({
+            "role": exp_role.strip(),
+            "company": exp_company.strip(),
+            "location": exp_location.strip(),
+            "duration": exp_duration.strip(),
+            "bullet_points": split_lines(exp_bullets),
+        })
+
+    projects = []
+    if proj1_title:
+        projects.append({
+            "title": proj1_title.strip(),
+            "tech_stack": proj1_tech.strip(),
+            "bullet_points": split_lines(proj1_bullets),
+            "github_url": proj1_github.strip(),
+        })
+    if proj2_title:
+        projects.append({
+            "title": proj2_title.strip(),
+            "tech_stack": proj2_tech.strip(),
+            "bullet_points": split_lines(proj2_bullets),
+            "github_url": proj2_github.strip(),
+        })
+
+    education = []
+    if edu_degree or edu_institution:
+        education.append({
+            "degree": edu_degree.strip(),
+            "institution": edu_institution.strip(),
+            "graduation_year": edu_year.strip(),
+            "cgpa_or_grade": edu_gpa.strip(),
+        })
+
+    resume_data = {
+        "target_role": target_role.strip(),
+        "full_name": full_name.strip() or student.name,
+        "email": email.strip() or student.email,
+        "phone": phone.strip(),
+        "location": location.strip(),
+        "linkedin_url": linkedin_url.strip(),
+        "github_url": github_url.strip(),
+        "portfolio_url": portfolio_url.strip(),
+        "summary": summary.strip(),
+        "skills_languages": split_comma(skills_languages),
+        "skills_frameworks": split_comma(skills_frameworks),
+        "skills_tools": split_comma(skills_tools),
+        "skills_core": split_comma(skills_core),
+        "education": education,
+        "experience": experience,
+        "projects": projects,
+        "certifications": split_lines(certifications),
+    }
+
+    svc.generate_ats_resume_agent(student.student_id, resume_data)
+    return RedirectResponse("/resume-builder/preview", status_code=303)
+
+
+@app.get("/resume-builder/preview", response_class=HTMLResponse)
+def resume_builder_preview_view(request: Request, saved: int = 0):
+    svc = get_service()
+    student = get_current_student(request, svc)
+    if not student:
+        return RedirectResponse("/login", status_code=303)
+
+    draft = svc.get_latest_ats_resume_draft(student.student_id)
+    if not draft or not draft.get("data"):
+        data = svc.extract_resume_fields_for_builder(student.student_id)
+        draft = svc.generate_ats_resume_agent(student.student_id, data)
+
+    resume_data = draft.get("data", {})
+    formatting_notes = draft.get("formatting_notes", "")
+    target_role = resume_data.get("target_role", "Software Engineering Intern")
+
+    # Compute or retrieve dynamic keyword evaluation
+    if "matched_keywords" in draft and "score_range" in draft:
+        ats_score = draft.get("ats_score", 85)
+        score_range = draft.get("score_range", "80-90%")
+        range_label = draft.get("range_label", "Strong ATS Match")
+        badge_class = draft.get("badge_class", "badge-verified")
+        matched_kw = draft.get("matched_keywords", [])
+        missing_kw = draft.get("missing_keywords", [])
+    else:
+        kw_eval = svc.compute_ats_keyword_score(target_role, resume_data)
+        ats_score = kw_eval["score"]
+        score_range = kw_eval["score_range"]
+        range_label = kw_eval["range_label"]
+        badge_class = kw_eval["badge_class"]
+        matched_kw = kw_eval["matched_keywords"]
+        missing_kw = kw_eval["missing_keywords"]
+
+    ats_tips = draft.get("ats_tips", [])
+
+    saved_banner = ""
+    if saved:
+        saved_banner = """
+        <div class="toast-success" style="position:relative; margin-bottom:1.5rem; width:100%; top:auto; right:auto;">
+          ✅ <strong>Resume Successfully Updated!</strong> Your active student profile and career analysis have been synchronized with this ATS resume.
+        </div>
+        """
+
+    # Build rendered HTML for the printable ATS sheet
+    contact_parts = []
+    if resume_data.get("email"):
+        contact_parts.append(f"<a href='mailto:{html.escape(resume_data['email'])}'>{html.escape(resume_data['email'])}</a>")
+    if resume_data.get("phone"):
+        contact_parts.append(html.escape(resume_data["phone"]))
+    if resume_data.get("location"):
+        contact_parts.append(html.escape(resume_data["location"]))
+    if resume_data.get("linkedin_url"):
+        contact_parts.append(f"<a href='https://{html.escape(resume_data['linkedin_url'].replace('https://', ''))}' target='_blank'>{html.escape(resume_data['linkedin_url'])}</a>")
+    if resume_data.get("github_url"):
+        contact_parts.append(f"<a href='https://{html.escape(resume_data['github_url'].replace('https://', ''))}' target='_blank'>{html.escape(resume_data['github_url'])}</a>")
+    if resume_data.get("portfolio_url"):
+        contact_parts.append(f"<a href='https://{html.escape(resume_data['portfolio_url'].replace('https://', ''))}' target='_blank'>{html.escape(resume_data['portfolio_url'])}</a>")
+
+    contact_html = ' <span class="sep">•</span> '.join(contact_parts)
+
+    # Technical Skills HTML
+    skills_html = ""
+    if resume_data.get("skills_languages"):
+        skills_html += f"<div class='resume-doc-skill-group'><strong>Languages:</strong> {html.escape(', '.join(resume_data['skills_languages']))}</div>"
+    if resume_data.get("skills_frameworks"):
+        skills_html += f"<div class='resume-doc-skill-group'><strong>Frameworks & Libraries:</strong> {html.escape(', '.join(resume_data['skills_frameworks']))}</div>"
+    if resume_data.get("skills_tools"):
+        skills_html += f"<div class='resume-doc-skill-group'><strong>Developer Tools & Databases:</strong> {html.escape(', '.join(resume_data['skills_tools']))}</div>"
+    if resume_data.get("skills_core"):
+        skills_html += f"<div class='resume-doc-skill-group'><strong>Core Competencies:</strong> {html.escape(', '.join(resume_data['skills_core']))}</div>"
+
+    # Education HTML
+    edu_html = ""
+    for edu in resume_data.get("education", []):
+        edu_html += f"""
+        <div class="resume-doc-entry">
+          <div class="resume-doc-entry-header">
+            <div>
+              <span class="resume-doc-entry-title">{html.escape(edu.get('institution', ''))}</span>
+              <span class="resume-doc-entry-subtitle"> — {html.escape(edu.get('degree', ''))}</span>
+            </div>
+            <div class="resume-doc-entry-date">{html.escape(str(edu.get('graduation_year', '')))}</div>
+          </div>
+          <div style="font-size:0.86rem; color:#475569; margin-top:0.15rem;">
+            CGPA / Performance: <strong>{html.escape(str(edu.get('cgpa_or_grade', '')))}</strong>
+          </div>
+        </div>
+        """
+
+    # Experience HTML
+    exp_html = ""
+    for exp in resume_data.get("experience", []):
+        bullets = "".join(f"<li>{html.escape(b)}</li>" for b in exp.get("bullet_points", []))
+        exp_html += f"""
+        <div class="resume-doc-entry">
+          <div class="resume-doc-entry-header">
+            <div>
+              <span class="resume-doc-entry-title">{html.escape(exp.get('role', ''))}</span>
+              <span class="resume-doc-entry-subtitle"> — {html.escape(exp.get('company', ''))}</span>
+            </div>
+            <div class="resume-doc-entry-date">{html.escape(exp.get('duration', ''))} | {html.escape(exp.get('location', ''))}</div>
+          </div>
+          <ul class="resume-doc-bullets">
+            {bullets}
+          </ul>
+        </div>
+        """
+
+    # Projects HTML
+    proj_html = ""
+    for proj in resume_data.get("projects", []):
+        bullets = "".join(f"<li>{html.escape(b)}</li>" for b in proj.get("bullet_points", []))
+        link_html = f" &nbsp;[<a href='https://{html.escape(proj['github_url'].replace('https://',''))}' target='_blank' style='color:#2563eb; font-size:0.82rem;'>Link</a>]" if proj.get("github_url") else ""
+        proj_html += f"""
+        <div class="resume-doc-entry">
+          <div class="resume-doc-entry-header">
+            <div>
+              <span class="resume-doc-entry-title">{html.escape(proj.get('title', ''))}</span>
+              <span class="resume-doc-entry-subtitle" style="font-style:italic; font-weight:500;"> | {html.escape(proj.get('tech_stack', ''))}</span>
+              {link_html}
+            </div>
+          </div>
+          <ul class="resume-doc-bullets">
+            {bullets}
+          </ul>
+        </div>
+        """
+
+    # Certifications HTML
+    certs_html = ""
+    if resume_data.get("certifications"):
+        certs_bullets = "".join(f"<li>{html.escape(c)}</li>" for c in resume_data["certifications"])
+        certs_html = f"""
+        <div class="resume-doc-sec-title">Certifications & Achievements</div>
+        <ul class="resume-doc-bullets">
+          {certs_bullets}
+        </ul>
+        """
+
+    tips_html = "".join(f"<li>✓ {html.escape(t)}</li>" for t in ats_tips)
+    
+    # Keyword chips
+    matched_chips = "".join(f"<span class='badge badge-verified' style='margin-right:0.35rem; margin-bottom:0.35rem;'>✓ {html.escape(k)}</span>" for k in matched_kw) or "<span style='color:var(--text-muted); font-size:0.85rem;'>None detected</span>"
+    missing_chips = "".join(f"<span class='badge badge-waiting' style='margin-right:0.35rem; margin-bottom:0.35rem;'>+ {html.escape(k)} (Add to boost score)</span>" for k in missing_kw) if missing_kw else "<span class='badge badge-verified'>All core role keywords present!</span>"
+
+    formatting_badge = f"<span class='badge badge-waiting' style='margin-left:0.5rem;'>Custom Style: {html.escape(formatting_notes)}</span>" if formatting_notes else ""
+
+    content = f"""
+    {saved_banner}
+
+    <!-- Action Bar -->
+    <div class="resume-action-bar">
+      <div style="display:flex; align-items:center; gap:0.75rem; flex-wrap:wrap;">
+        <a href="/resume-builder" class="btn btn-secondary" style="font-size:0.85rem;">
+          ← Edit Form Details
+        </a>
+        <div style="display:flex; align-items:center; gap:0.4rem; flex-wrap:wrap;">
+          <span class="badge {badge_class}" style="font-size:0.85rem; padding:0.35rem 0.75rem;">
+            ★ ATS Score: {ats_score}/100 &nbsp;•&nbsp; Range: {score_range}
+          </span>
+          <span class="badge badge-primary">{html.escape(target_role)}</span>
+          {formatting_badge}
+        </div>
+      </div>
+
+      <div style="display:flex; gap:0.6rem; align-items:center;">
+        <!-- Print / PDF -->
+        <button type="button" onclick="window.print()" class="btn btn-secondary" title="Print or save as PDF">
+          🖨️ Print as PDF
+        </button>
+
+        <!-- Regenerate Modal Button -->
+        <button type="button" onclick="openRegenModal()" class="btn" style="background:#0284c7;" title="Modify formatting/styling via AI Agent">
+          🔄 Regenerate
+        </button>
+
+        <!-- Accept & Update -->
+        <form method="post" action="/resume-builder/accept" style="margin:0;">
+          <button type="submit" class="btn btn-success" title="Replace profile resume with this version">
+            ✅ Accept & Update
+          </button>
+        </form>
+      </div>
+    </div>
+
+    <!-- Dynamic Keyword Match & ATS Breakdown -->
+    <div class="resume-section-card" style="margin-bottom:1.5rem; padding:1.25rem 1.5rem;">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:0.75rem; flex-wrap:wrap; gap:0.5rem;">
+        <div>
+          <strong style="color:#1e3a8a; font-size:0.95rem;">🎯 Role Keyword Match Analysis ({html.escape(target_role)}):</strong>
+          <span style="font-size:0.85rem; color:var(--text-muted); margin-left:0.5rem;">Status: <strong>{html.escape(range_label)}</strong></span>
+        </div>
+        <div style="font-size:0.82rem; color:var(--text-muted);">
+          Bracket: <strong>{score_range}</strong>
+        </div>
+      </div>
+
+      <div style="display:grid; grid-template-columns:1fr 1fr; gap:1.25rem; margin-top:0.5rem;">
+        <div style="background:var(--surface-alt); padding:0.85rem 1rem; border-radius:8px; border:1px solid var(--border);">
+          <div style="font-size:0.8rem; font-weight:700; color:#166534; margin-bottom:0.4rem; text-transform:uppercase;">
+            Present Keywords Detected in Resume:
+          </div>
+          <div style="display:flex; flex-wrap:wrap;">
+            {matched_chips}
+          </div>
+        </div>
+
+        <div style="background:var(--surface-alt); padding:0.85rem 1rem; border-radius:8px; border:1px solid var(--border);">
+          <div style="font-size:0.8rem; font-weight:700; color:#92400e; margin-bottom:0.4rem; text-transform:uppercase;">
+            Keywords to Add for Higher Bracket:
+          </div>
+          <div style="display:flex; flex-wrap:wrap;">
+            {missing_chips}
+          </div>
+        </div>
+      </div>
+
+      <div style="margin-top:0.85rem; padding-top:0.65rem; border-top:1px solid var(--border); font-size:0.82rem; color:var(--text-muted);">
+        <strong>Score Tiers:</strong>
+        <span style="margin-left:0.5rem;"><strong>60–70%:</strong> Basic match (&lt;50% keywords)</span> &bull; 
+        <span style="margin-left:0.5rem;"><strong>70–80%:</strong> Moderate match (50-80% keywords)</span> &bull; 
+        <span style="margin-left:0.5rem;"><strong>80–90%+:</strong> Strong ATS match (All keywords + Action verbs + Quantified metrics)</span>
+      </div>
+    </div>
+
+
+    <!-- The ATS Printable Sheet -->
+    <div class="resume-paper-wrapper">
+      <div class="resume-paper" id="resumePaper">
+        
+        <!-- Header -->
+        <div class="resume-doc-name">{html.escape(resume_data.get('full_name', 'Student Name'))}</div>
+        <div class="resume-doc-contact">
+          {contact_html}
+        </div>
+
+        <!-- Professional Summary -->
+        <div class="resume-doc-sec-title">Professional Summary</div>
+        <p style="font-size:0.88rem; color:#334155; line-height:1.55; margin-bottom:0.85rem;">
+          {html.escape(resume_data.get('summary', ''))}
+        </p>
+
+        <!-- Technical Skills -->
+        <div class="resume-doc-sec-title">Technical Skills</div>
+        {skills_html}
+
+        <!-- Experience -->
+        {f'<div class="resume-doc-sec-title">Experience</div>{exp_html}' if exp_html.strip() else ''}
+
+        <!-- Projects -->
+        <div class="resume-doc-sec-title">Key Projects</div>
+        {proj_html}
+
+        <!-- Education -->
+        <div class="resume-doc-sec-title">Education</div>
+        {edu_html}
+
+        <!-- Certifications -->
+        {certs_html}
+
+      </div>
+    </div>
+
+    <!-- Regenerate Modal Dialog -->
+    <div class="modal-overlay" id="regenModal">
+      <div class="modal-box">
+        <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:1rem;">
+          <div>
+            <h3 class="modal-title">🔄 Regenerate Resume Formatting</h3>
+            <p style="font-size:0.84rem; color:var(--text-muted); margin-top:0.2rem;">
+              Describe formatting or styling changes. The AI Agent will adapt the layout while keeping your core content intact.
+            </p>
+          </div>
+          <button type="button" onclick="closeRegenModal()" style="background:none; border:none; font-size:1.5rem; color:#94a3b8; cursor:pointer; line-height:1;">&times;</button>
+        </div>
+
+        <form method="post" action="/resume-builder/regenerate">
+          <div class="form-group">
+            <label>Formatting / Styling Instructions</label>
+            <textarea id="formattingInput" name="formatting_prompt" rows="3" placeholder="e.g. Make it a single-page compact layout, highlight metrics in project bullets, use concise phrasing..." required>{html.escape(formatting_notes)}</textarea>
+          </div>
+
+          <div style="margin-bottom:1.25rem;">
+            <span style="font-size:0.78rem; font-weight:700; color:var(--text-muted); text-transform:uppercase;">Quick Suggestion Prompts:</span>
+            <div class="chip-group">
+              <button type="button" class="chip-btn" onclick="applyChip('Ultra-compact 1-page layout with high information density')">Compact 1-Page Layout</button>
+              <button type="button" class="chip-btn" onclick="applyChip('Add quantified metrics & performance percentages to all project bullets')">Quantified Metrics Focus</button>
+              <button type="button" class="chip-btn" onclick="applyChip('Emphasize Python, REST APIs, and backend architecture keywords')">Backend Keywords Focus</button>
+              <button type="button" class="chip-btn" onclick="applyChip('Strong action verbs format: Spearheaded, Architected, Engineered')">Action Verbs Polish</button>
+            </div>
+          </div>
+
+          <div style="display:flex; justify-content:flex-end; gap:0.75rem; border-top:1px solid var(--border); padding-top:1rem;">
+            <button type="button" onclick="closeRegenModal()" class="btn btn-secondary">Cancel</button>
+            <button type="submit" class="btn" style="background:#0284c7;">
+              ✨ Regenerate Resume &rarr;
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <script>
+      function openRegenModal() {{
+        document.getElementById('regenModal').classList.add('active');
+        document.getElementById('formattingInput').focus();
+      }}
+      function closeRegenModal() {{
+        document.getElementById('regenModal').classList.remove('active');
+      }}
+      function applyChip(text) {{
+        document.getElementById('formattingInput').value = text;
+      }}
+      document.addEventListener('keydown', function(e) {{
+        if (e.key === 'Escape') closeRegenModal();
+      }});
+    </script>
+    """
+    return render_page("ATS Resume Preview", content, active_nav="resume", student=student)
+
+
+@app.post("/resume-builder/regenerate")
+async def resume_builder_handle_regenerate(request: Request, formatting_prompt: str = Form("")):
+    svc = get_service()
+    student = get_current_student(request, svc)
+    if not student:
+        return RedirectResponse("/login", status_code=303)
+
+    draft = svc.get_latest_ats_resume_draft(student.student_id)
+    if draft and draft.get("data"):
+        data = draft["data"]
+    else:
+        data = svc.extract_resume_fields_for_builder(student.student_id)
+
+    svc.generate_ats_resume_agent(student.student_id, data, formatting_notes=formatting_prompt.strip())
+    return RedirectResponse("/resume-builder/preview", status_code=303)
+
+
+@app.post("/resume-builder/accept")
+def resume_builder_handle_accept(request: Request):
+    svc = get_service()
+    student = get_current_student(request, svc)
+    if not student:
+        return RedirectResponse("/login", status_code=303)
+
+    draft = svc.get_latest_ats_resume_draft(student.student_id)
+    if not draft:
+        return RedirectResponse("/resume-builder", status_code=303)
+
+    svc.save_and_apply_ats_resume(
+        student.student_id,
+        draft.get("markdown_text", ""),
+        draft.get("data", {}),
+    )
+    return RedirectResponse("/resume-builder/preview?saved=1", status_code=303)
+

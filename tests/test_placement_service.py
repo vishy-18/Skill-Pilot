@@ -22,9 +22,18 @@ class FakePortal:
 
 
 def test_sync_service_bridges_async_placement_client(monkeypatch, tmp_path):
+    from navigator.schema import StudentRegistration
     monkeypatch.setattr("navigator.services.PlacementPortalClient", FakePortal)
     service = NavigatorService(str(tmp_path / "placement.db"))
-    student = service.login_student("arun@college.edu", "secret")
+    student = service.register_student(StudentRegistration(
+        name="Test Student",
+        email="test@college.edu",
+        password="password123",
+        college="CEG",
+        department="CSE",
+        graduation_year=2026,
+        career_goal_role="Software Engineering Intern",
+    ))
 
     jobs = service.find_placement_opportunities(student.student_id)
     document = service.fetch_job_from_placement_portal(student.student_id, "job-1")

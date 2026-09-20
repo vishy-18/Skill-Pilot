@@ -258,3 +258,53 @@ class ActivityEvent(BaseModel):
     title: str
     details: str
     timestamp: float = Field(default_factory=time.time)
+
+
+# ------------------------------------------------------------- ATS Resume Builder
+
+class ATSResumeEducation(BaseModel):
+    degree: str = "B.Tech in Computer Science"
+    institution: str = "National Institute of Technology"
+    graduation_year: str = "2027"
+    cgpa_or_grade: str = "8.5 / 10.0"
+
+
+class ATSResumeExperience(BaseModel):
+    role: str = ""
+    company: str = ""
+    location: str = ""
+    duration: str = ""
+    bullet_points: list[str] = Field(default_factory=list)
+
+
+class ATSResumeProject(BaseModel):
+    title: str = ""
+    tech_stack: str = ""
+    bullet_points: list[str] = Field(default_factory=list)
+    github_url: str = ""
+
+
+class ATSResumeModel(BaseModel):
+    resume_id: str = Field(default_factory=lambda: gen_id("res"))
+    student_id: str
+    target_role: str = "Software Engineering Intern"
+    full_name: str = "Arun"
+    email: str = "arun@college.edu"
+    phone: str = "+91 98765 43210"
+    location: str = "Chennai, India"
+    linkedin_url: str = ""
+    github_url: str = ""
+    portfolio_url: str = ""
+    summary: str = ""
+    skills_languages: list[str] = Field(default_factory=list)
+    skills_frameworks: list[str] = Field(default_factory=list)
+    skills_tools: list[str] = Field(default_factory=list)
+    skills_core: list[str] = Field(default_factory=list)
+    education: list[ATSResumeEducation] = Field(default_factory=list)
+    experience: list[ATSResumeExperience] = Field(default_factory=list)
+    projects: list[ATSResumeProject] = Field(default_factory=list)
+    certifications: list[str] = Field(default_factory=list)
+    ats_score: int = 92
+    formatting_notes: str = ""
+    created_at: float = Field(default_factory=time.time)
+

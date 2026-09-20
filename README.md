@@ -318,82 +318,53 @@ Copy `.env.example` to `.env` and set the key:
 Copy-Item .env.example .env
 ```
 
+### Quickstart & Configuration
+
+Configure `.env` in the root folder:
+
 ```dotenv
-OPENROUTER_API_KEY=your-key-here
+OPENROUTER_API_KEY=your-openrouter-key
+PLACEMENT_PORTAL_URL=https://q0wxbt85-3000.inc1.devtunnels.ms
+PLACEMENT_PORTAL_STUDENT_ID=AU2027CSE001
+PLACEMENT_PORTAL_PASSWORD=student123
 SLICE_MODEL=inclusionai/ling-3.0-flash
 SLICE_FALLBACK_MODEL=mistralai/mistral-small-3.2-24b-instruct
 SLICE_MAX_TOKENS=1200
 SLICE_MAX_TOKENS_PER_RUN=250000
 ```
 
-`GROQ_API_KEY` is also accepted and takes precedence when present. Never commit
-`.env` or place a key in source code. The portal has deterministic fallbacks, so
-profile, role, assessment, path, progress, and resource workflows can be
-demonstrated without a live key.
-
-### Start the portal
+### Start the Portal
 
 ```powershell
+# See RUN.md for exact one-command startup instructions
 uvicorn web.portal:app --host 127.0.0.1 --port 8000 --reload
 ```
 
 Open <http://127.0.0.1:8000>.
 
-### Use the forwarded placement portal with the agent
+### Multi-User Career & Placement Portal Agent Integration
 
-Start or forward the `Mock Carrer Portal` on its local URL, install the browser
-runtime, and configure the agent before calling `NavigatorService` placement
-tools:
+Skill-Pilot treats every student as an independent user:
+- **Registration & Profile Creation**: Register at `/register` to provision a unique student ID, resume text, and career goal.
+- **Dynamic Placement Portal Synchronization**: Before searching or applying for drives, the Playwright agent verifies the student on the Mock Placement Portal (`PlacementPortalClient`), auto-provisions missing profiles, and authenticates the student's session.
+- **Live Drive Matching & Application**: Reads live recruitment drives, computes role-fit scores against student skills, and executes deterministic eligibility checks before submitting applications into the CUIC placement database.
 
-```powershell
-python -m playwright install chromium
-$env:PLACEMENT_PORTAL_URL = "https://n4mst3ss-3000.inc1.devtunnels.ms"
-$env:PLACEMENT_PORTAL_STUDENT_ID = "AU2027CSE001"
-$env:PLACEMENT_PORTAL_PASSWORD = "student123"
-```
-
-`fetch_job_from_placement_portal(student_id, job_id)` reads the job description
-through the portal UI. `apply_to_placement_job(student_id, job_id)` checks the
-portal's eligibility badge and only confirms an eligible application.
-
-The existing demo user is:
-
-```text
-Email: arun@college.edu
-Password: secret
-```
-
-Use `SLICE_DB` to choose another SQLite file:
-
-```powershell
-$env:SLICE_DB = "local-run.db"
-uvicorn web.portal:app --host 127.0.0.1 --port 8000 --reload
-```
-
-### Optional expert callback server
-
-```powershell
-uvicorn web.expert:app --host 0.0.0.0 --port 8001
-```
-
-## Main Routes
+### Main Routes
 
 | Route | Purpose |
 |---|---|
-| `/login` | Sign in or use the demo account |
-| `/register` | Create a student profile with education, goal, and resume |
-| `/` | Personalized dashboard and selectable learning paths |
-| `/career-analysis` | Resume-driven gap report and role readiness |
-| `/career-goals` | Change the active target role |
-| `/learning-coach` | Context-aware instructor chat |
-| `/assessment` | Topic list, ten-question tests, attempts, and scores |
-| `/learning-plan` | Current schedule and integrated paths |
-| `/progress` | Completion, charts, confidence, stale topics, roles, and timeline |
-| `/resources` | Topic-specific books, courses, and references |
-| `/job-analyzer` | Job-description extraction, provenance, and gap analysis |
-| `/profile` | Edit education/resume and manage project evidence |
-| `/demo` | Run the 20-step Arun workflow |
-| `/logout` | End the browser session |
+| `/login` | Student authentication with clean credential verification |
+| `/register` | Create a new student learning profile with education, goal, and resume PDF upload |
+| `/` | Personalized student dashboard, active career goal, and skill analytics |
+| `/career-analysis` | Resume-driven skill gap report and role readiness |
+| `/career-goals` | Manage and update active target career role |
+| `/learning-coach` | Context-aware AI career instructor chat and misconception untangling |
+| `/assessment` | Diagnostic topic assessments, audio transcription, attempts, and scores |
+| `/resume-builder` | AI-powered ATS resume builder, keyword match brackets, and regeneration |
+| `/job-analyzer` | Real-time job description requirement extraction and provenance verification |
+| `/learning-plan` | Human-checkpoint approved adaptive learning schedules |
+| `/progress` | Skill progress, mastery scores, timeline, and SQLite activity feeds |
+| `/logout` | End student session |
 
 ## Tests and Diagnostics
 
