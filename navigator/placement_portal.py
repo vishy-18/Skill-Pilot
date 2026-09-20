@@ -33,6 +33,32 @@ class PlacementPortalClient:
         self.password = password or os.getenv("PLACEMENT_PORTAL_PASSWORD", "student123")
         self.headless = headless if headless is not None else os.getenv("PLAYWRIGHT_HEADLESS", "true").lower() != "false"
 
+    def _resolve_browser_url(self) -> str:
+        """Resolve the URL that Playwright should navigate to.
+
+        Dev Tunnels (*.devtunnels.ms) require GitHub OAuth, which a fresh
+        headless Chromium cannot satisfy.  When the portal server is running
+        locally we can bypass the tunnel and talk to localhost directly.
+
+        Priority:
+        1. PLACEMENT_PORTAL_LOCAL_URL env-var (explicit override)
+        2. Auto-detect port from devtunnel URL pattern  (e.g. xxx-3000.*)
+        3. Fall back to the configured base_url as-is
+        """
+        import re
+
+        local_override = os.getenv("PLACEMENT_PORTAL_LOCAL_URL", "").strip()
+        if local_override:
+            return local_override.rstrip("/")
+
+        # devtunnel URLs look like https://<id>-<port>.<region>.devtunnels.ms
+        match = re.search(r"-(\d+)\.", self.base_url)
+        if "devtunnels.ms" in self.base_url and match:
+            port = match.group(1)
+            return f"http://localhost:{port}"
+
+        return self.base_url
+
     @contextmanager
     def _page(self) -> Iterator[Any]:
         try:
@@ -46,7 +72,7 @@ class PlacementPortalClient:
                 browser = playwright.chromium.launch(headless=self.headless)
                 try:
                     page = browser.new_page()
-                    page.set_default_timeout(10_000)
+                    page.set_default_timeout(30_000)
                     self._login(page)
                     yield page
                 finally:
@@ -57,17 +83,26 @@ class PlacementPortalClient:
             raise PlacementPortalError(f"Could not reach placement portal at {self.base_url}. Start or forward the portal first.") from exc
 
     def _login(self, page: Any) -> None:
-        page.goto(f"{self.base_url}/login", wait_until="domcontentloaded")
+        browser_url = self._resolve_browser_url()
+
+        page.goto(f"{browser_url}/login", wait_until="domcontentloaded")
+
+        # Handle devtunnel interstitial "Continue" page (for non-OAuth tunnels)
         continue_button = page.get_by_role("button", name="Continue")
         if continue_button.count():
             continue_button.click()
             page.wait_for_load_state("domcontentloaded")
+
         if "/login" not in page.url:
             return
+
+        # Wait for the login form to be fully rendered before interacting
+        page.get_by_test_id("student-id").wait_for(state="visible", timeout=30_000)
+
         page.get_by_test_id("student-id").fill(self.student_id)
         page.get_by_test_id("password").fill(self.password)
         page.get_by_test_id("login-button").click()
-        page.wait_for_url(lambda url: "/login" not in url)
+        page.wait_for_url(lambda url: "/login" not in url, timeout=30_000)
 
     def _fetch_job_sync(self, job_id: str) -> dict[str, Any]:
         with self._page() as page:
@@ -77,7 +112,8 @@ class PlacementPortalClient:
         return await asyncio.to_thread(self._fetch_job_sync, job_id)
 
     def _read_job(self, page: Any, job_id: str) -> dict[str, Any]:
-        page.goto(f"{self.base_url}/jobs/{job_id}", wait_until="networkidle")
+        browser_url = self._resolve_browser_url()
+        page.goto(f"{browser_url}/jobs/{job_id}", wait_until="networkidle")
         required = page.locator("#jd-required-skills").inner_text().strip()
         preferred = page.locator("#jd-preferred-skills").inner_text().strip()
         description = page.locator("#jd-desc").inner_text().strip()
@@ -96,7 +132,8 @@ class PlacementPortalClient:
         role_terms = {term.lower() for term in target_role.split() if len(term) > 2}
         skill_terms = {skill.lower() for skill in target_skills if skill}
         with self._page() as page:
-            page.goto(f"{self.base_url}/jobs", wait_until="networkidle")
+            browser_url = self._resolve_browser_url()
+            page.goto(f"{browser_url}/jobs", wait_until="networkidle")
             cards = page.locator("[data-testid^='job-card-']")
             cards.first.wait_for(state="visible")
             candidates: list[tuple[int, str]] = []
@@ -120,7 +157,8 @@ class PlacementPortalClient:
 
     def _apply_to_job_sync(self, job_id: str, preferred_location: str | None) -> dict[str, Any]:
         with self._page() as page:
-            page.goto(f"{self.base_url}/jobs/{job_id}", wait_until="networkidle")
+            browser_url = self._resolve_browser_url()
+            page.goto(f"{browser_url}/jobs/{job_id}", wait_until="networkidle")
             status = page.get_by_test_id("eligibility-status").inner_text().strip().upper()
             if status != "ELIGIBLE":
                 reason = page.get_by_test_id("eligibility-reason").inner_text().strip()
@@ -134,3 +172,4 @@ class PlacementPortalClient:
 
     async def apply_to_job(self, job_id: str, preferred_location: str | None = None) -> dict[str, Any]:
         return await asyncio.to_thread(self._apply_to_job_sync, job_id, preferred_location)
+

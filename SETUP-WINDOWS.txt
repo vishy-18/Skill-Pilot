@@ -1,0 +1,158 @@
+# ============================================================================
+#  SKILL PILOT - COMPLETE WINDOWS SETUP (For Your Friend)
+# ============================================================================
+#
+#  ARCHITECTURE: Two servers must run simultaneously
+#  ┌──────────────────────┐       ┌─────────────────────┐
+#  │  Mock Career Portal  │       │   Skill Pilot App    │
+#  │  (Node.js Express)   │◄──────│   (Python FastAPI)   │
+#  │  localhost:3000       │       │   localhost:8000     │
+#  └──────────────────────┘       └─────────────────────┘
+#
+#  The Skill Pilot agent uses Playwright to browse the Mock Career Portal
+#  on localhost:3000 to fetch jobs, check eligibility, and apply.
+#
+# ============================================================================
+#  PREREQUISITES: Python 3.11+, Node.js 18+, Git
+# ============================================================================
+
+
+# =============================================
+#  STEP 1: Clone the Skill Pilot repo
+# =============================================
+
+git clone https://github.com/vishy-18/Skill-Pilot.git
+cd Skill-Pilot
+
+
+# =============================================
+#  STEP 2: Create Python virtual environment
+# =============================================
+
+py -3 -m venv .venv
+.\.venv\Scripts\Activate.ps1
+
+
+# =============================================
+#  STEP 3: Install Python dependencies
+# =============================================
+
+pip install --upgrade pip
+pip install -r requirements.txt
+
+
+# =============================================
+#  STEP 4: Install Playwright Chromium browser
+# =============================================
+
+python -m playwright install chromium
+
+
+# =============================================
+#  STEP 5: Create the .env file
+# =============================================
+#  Copy .env.example and fill in your API key
+
+Copy-Item .env.example .env
+
+#  Then EDIT .env and set these values:
+#
+#    GROQ_API_KEY=<your-groq-api-key-from-https://console.groq.com/keys>
+#    SLICE_BASE_URL=https://api.groq.com/openai/v1
+#    SLICE_MODEL=qwen/qwen3.8-27b
+#    SLICE_FALLBACK_MODEL=llama-3.1-8b-instant
+#    SLICE_MAX_TOKENS=1200
+#    SLICE_MAX_TOKENS_PER_RUN=250000
+#    SLICE_MAX_ATTEMPTS_PER_STEP=3
+#    PLACEMENT_PORTAL_URL=https://n4mst3ss-3000.inc1.devtunnels.ms
+#
+#  NOTE: The Playwright agent auto-detects devtunnels.ms URLs and
+#        connects to localhost:3000 directly instead, bypassing
+#        the GitHub OAuth gate. So you MUST also run the Mock
+#        Career Portal locally (see Step 6).
+
+
+# =============================================
+#  STEP 6: Set up the Mock Career Portal
+# =============================================
+#
+#  !! CRITICAL !! This server MUST be running BEFORE
+#  you use any job/placement features in Skill Pilot.
+#
+#  The Mock Career Portal is a separate Node.js app.
+#  You need it from the hackathon assets folder.
+#  If you don't have it, ask your teammate to share
+#  the "Mock Carrer Portal" folder.
+
+#  In a SEPARATE PowerShell terminal:
+
+cd "Mock Carrer Portal"
+npm install
+node server/server.js
+
+#  You should see:
+#  ================================================================
+#    ANNA UNIVERSITY CAMPUS RECRUITMENT SIMULATION PORTAL
+#    Centre for University-Industry Collaboration (CUIC)
+#    Local Address:   http://localhost:3000
+#    Network Address: http://0.0.0.0:3000
+#  ================================================================
+#
+#  Verify: open http://localhost:3000/login in your browser.
+#  You should see the login page with demo credentials.
+
+
+# =============================================
+#  STEP 7: Start the Skill Pilot server
+# =============================================
+#
+#  In ANOTHER PowerShell terminal (keep Portal running!):
+
+cd Skill-Pilot
+.\.venv\Scripts\Activate.ps1
+python -m uvicorn web.portal:app --host 127.0.0.1 --port 8000 --reload
+
+#  Open: http://127.0.0.1:8000
+
+
+# ============================================================================
+#  TROUBLESHOOTING
+# ============================================================================
+#
+#  ERROR: "Placement portal browser operation failed"
+#  FIX:   Make sure the Mock Career Portal is running on localhost:3000
+#         Open http://localhost:3000/login in your browser to verify.
+#
+#  ERROR: "Internal Server Error" when checking jobs
+#  FIX:   1. Ensure BOTH servers are running (port 3000 AND port 8000)
+#         2. Check that .env has a valid GROQ_API_KEY
+#         3. Check that PLACEMENT_PORTAL_URL is set in .env
+#
+#  ERROR: "GROQ_API_KEY" / "OPENROUTER_API_KEY" not configured
+#  FIX:   Get a free API key from https://console.groq.com/keys
+#         Add it to .env: GROQ_API_KEY=gsk_your_key_here
+#
+#  ERROR: "playwright" not found or browser errors
+#  FIX:   Run: python -m playwright install chromium
+#
+#  ERROR: GitHub OAuth page when using devtunnel URL
+#  FIX:   This is NORMAL. The code auto-redirects Playwright to
+#         localhost:3000. Just make sure the portal is running locally.
+#
+# ============================================================================
+#  QUICK START CHECKLIST
+# ============================================================================
+#
+#  [ ] Python 3.11+ installed  (py --version)
+#  [ ] Node.js 18+ installed   (node --version)
+#  [ ] Git installed            (git --version)
+#  [ ] Skill-Pilot repo cloned
+#  [ ] .venv created and activated
+#  [ ] requirements.txt installed
+#  [ ] playwright chromium installed
+#  [ ] .env created with valid GROQ_API_KEY
+#  [ ] Mock Career Portal running on localhost:3000  (Terminal 1)
+#  [ ] Skill Pilot running on localhost:8000         (Terminal 2)
+#  [ ] Open http://127.0.0.1:8000 and test!
+#
+# ============================================================================
