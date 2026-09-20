@@ -8,5 +8,6 @@ uvicorn>=0.30          # serves it
 python-multipart>=0.0.9 # form and resume uploads
 pypdf>=5.0             # text extraction from uploaded PDF resumes
 playwright>=1.43     # browser tool for the forwarded placement portal
+faster-whisper>=1.0   # local speech-to-text for voice concept assessments
 # dev
 pytest>=8.0

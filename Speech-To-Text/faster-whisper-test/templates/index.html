@@ -1,0 +1,707 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="Test faster-whisper speech-to-text transcription quality with live microphone recording.">
+    <title>Whisper Transcription Test</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        *, *::before, *::after {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        :root {
+            --bg-primary: #0a0e1a;
+            --bg-secondary: #111827;
+            --bg-card: rgba(17, 24, 39, 0.6);
+            --border-color: rgba(99, 102, 241, 0.15);
+            --border-glow: rgba(99, 102, 241, 0.4);
+            --text-primary: #f1f5f9;
+            --text-secondary: #94a3b8;
+            --text-muted: #64748b;
+            --accent: #6366f1;
+            --accent-light: #818cf8;
+            --accent-glow: rgba(99, 102, 241, 0.25);
+            --success: #34d399;
+            --success-bg: rgba(52, 211, 153, 0.1);
+            --error: #f87171;
+            --error-bg: rgba(248, 113, 113, 0.1);
+            --recording: #ef4444;
+            --recording-glow: rgba(239, 68, 68, 0.4);
+        }
+
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            overflow-x: hidden;
+        }
+
+        /* Animated background gradient orbs */
+        body::before,
+        body::after {
+            content: '';
+            position: fixed;
+            border-radius: 50%;
+            filter: blur(120px);
+            z-index: 0;
+            pointer-events: none;
+        }
+
+        body::before {
+            width: 500px;
+            height: 500px;
+            background: radial-gradient(circle, rgba(99, 102, 241, 0.12), transparent 70%);
+            top: -100px;
+            right: -100px;
+            animation: float-orb 15s ease-in-out infinite;
+        }
+
+        body::after {
+            width: 400px;
+            height: 400px;
+            background: radial-gradient(circle, rgba(139, 92, 246, 0.1), transparent 70%);
+            bottom: -50px;
+            left: -50px;
+            animation: float-orb 20s ease-in-out infinite reverse;
+        }
+
+        @keyframes float-orb {
+            0%, 100% { transform: translate(0, 0) scale(1); }
+            33% { transform: translate(30px, -20px) scale(1.05); }
+            66% { transform: translate(-20px, 15px) scale(0.95); }
+        }
+
+        .container {
+            position: relative;
+            z-index: 1;
+            width: 100%;
+            max-width: 680px;
+            padding: 40px 24px 60px;
+        }
+
+        /* Header */
+        .header {
+            text-align: center;
+            margin-bottom: 48px;
+        }
+
+        .header-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 6px 14px;
+            background: var(--accent-glow);
+            border: 1px solid var(--border-color);
+            border-radius: 100px;
+            font-size: 12px;
+            font-weight: 500;
+            color: var(--accent-light);
+            letter-spacing: 0.5px;
+            text-transform: uppercase;
+            margin-bottom: 20px;
+        }
+
+        .header-badge .dot {
+            width: 6px;
+            height: 6px;
+            background: var(--success);
+            border-radius: 50%;
+            animation: pulse-dot 2s ease-in-out infinite;
+        }
+
+        @keyframes pulse-dot {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.4; }
+        }
+
+        h1 {
+            font-size: 36px;
+            font-weight: 700;
+            letter-spacing: -0.5px;
+            background: linear-gradient(135deg, var(--text-primary), var(--accent-light));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            margin-bottom: 10px;
+        }
+
+        .subtitle {
+            font-size: 15px;
+            color: var(--text-secondary);
+            font-weight: 400;
+        }
+
+        /* Card */
+        .card {
+            background: var(--bg-card);
+            backdrop-filter: blur(24px);
+            -webkit-backdrop-filter: blur(24px);
+            border: 1px solid var(--border-color);
+            border-radius: 20px;
+            padding: 40px 32px;
+            margin-bottom: 24px;
+            transition: border-color 0.3s ease;
+        }
+
+        .card:hover {
+            border-color: var(--border-glow);
+        }
+
+        /* Record button */
+        .record-section {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 20px;
+        }
+
+        #recordBtn {
+            position: relative;
+            width: 96px;
+            height: 96px;
+            border-radius: 50%;
+            border: none;
+            cursor: pointer;
+            background: linear-gradient(135deg, var(--accent), #7c3aed);
+            color: white;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: transform 0.2s ease, box-shadow 0.3s ease;
+            box-shadow: 0 4px 24px var(--accent-glow);
+        }
+
+        #recordBtn:hover {
+            transform: scale(1.06);
+            box-shadow: 0 6px 32px var(--accent-glow);
+        }
+
+        #recordBtn:active {
+            transform: scale(0.97);
+        }
+
+        #recordBtn.recording {
+            background: linear-gradient(135deg, var(--recording), #dc2626);
+            box-shadow: 0 4px 32px var(--recording-glow);
+            animation: pulse-record 1.5s ease-in-out infinite;
+        }
+
+        @keyframes pulse-record {
+            0%, 100% { box-shadow: 0 4px 24px var(--recording-glow); }
+            50% { box-shadow: 0 4px 48px var(--recording-glow), 0 0 0 12px rgba(239, 68, 68, 0.08); }
+        }
+
+        #recordBtn svg {
+            width: 32px;
+            height: 32px;
+            transition: opacity 0.2s ease;
+        }
+
+        .btn-label {
+            font-size: 14px;
+            font-weight: 500;
+            color: var(--text-secondary);
+        }
+
+        /* Timer */
+        #timer {
+            font-size: 28px;
+            font-weight: 600;
+            color: var(--text-primary);
+            font-variant-numeric: tabular-nums;
+            opacity: 0;
+            transition: opacity 0.3s ease;
+        }
+
+        #timer.visible {
+            opacity: 1;
+        }
+
+        /* Status bar */
+        .status-bar {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            padding: 10px 20px;
+            border-radius: 12px;
+            font-size: 13px;
+            font-weight: 500;
+            min-height: 40px;
+            transition: all 0.3s ease;
+        }
+
+        .status-bar.idle {
+            color: var(--text-muted);
+        }
+
+        .status-bar.recording {
+            color: var(--recording);
+            background: var(--error-bg);
+        }
+
+        .status-bar.processing {
+            color: var(--accent-light);
+            background: var(--accent-glow);
+        }
+
+        .status-bar.done {
+            color: var(--success);
+            background: var(--success-bg);
+        }
+
+        .status-bar.error {
+            color: var(--error);
+            background: var(--error-bg);
+        }
+
+        .spinner {
+            width: 16px;
+            height: 16px;
+            border: 2px solid transparent;
+            border-top-color: var(--accent-light);
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        /* Visualizer */
+        #visualizer {
+            width: 100%;
+            height: 64px;
+            border-radius: 12px;
+            opacity: 0;
+            transition: opacity 0.4s ease;
+        }
+
+        #visualizer.active {
+            opacity: 1;
+        }
+
+        /* Results */
+        .results-card {
+            opacity: 0;
+            transform: translateY(12px);
+            transition: opacity 0.5s ease, transform 0.5s ease;
+        }
+
+        .results-card.visible {
+            opacity: 1;
+            transform: translateY(0);
+        }
+
+        .results-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 20px;
+        }
+
+        .results-title {
+            font-size: 16px;
+            font-weight: 600;
+            color: var(--text-primary);
+        }
+
+        .meta-pills {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+        }
+
+        .meta-pill {
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            padding: 4px 12px;
+            background: rgba(255, 255, 255, 0.04);
+            border: 1px solid var(--border-color);
+            border-radius: 100px;
+            font-size: 12px;
+            color: var(--text-secondary);
+            font-weight: 500;
+        }
+
+        .meta-pill .value {
+            color: var(--text-primary);
+        }
+
+        .transcript-box {
+            background: rgba(0, 0, 0, 0.25);
+            border: 1px solid var(--border-color);
+            border-radius: 14px;
+            padding: 24px;
+            margin-top: 16px;
+            min-height: 80px;
+            line-height: 1.75;
+            font-size: 15px;
+            color: var(--text-primary);
+            white-space: pre-wrap;
+            word-break: break-word;
+        }
+
+        .transcript-box:empty::before {
+            content: 'No speech detected.';
+            color: var(--text-muted);
+            font-style: italic;
+        }
+
+        /* Copy button */
+        .copy-btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            margin-top: 14px;
+            padding: 8px 16px;
+            background: transparent;
+            border: 1px solid var(--border-color);
+            border-radius: 10px;
+            color: var(--text-secondary);
+            font-size: 13px;
+            font-weight: 500;
+            font-family: inherit;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+
+        .copy-btn:hover {
+            border-color: var(--accent);
+            color: var(--accent-light);
+            background: var(--accent-glow);
+        }
+
+        .copy-btn svg {
+            width: 14px;
+            height: 14px;
+        }
+
+        /* Language selector */
+        .lang-select-wrapper {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            width: 100%;
+            max-width: 280px;
+        }
+
+        .lang-select-wrapper label {
+            font-size: 13px;
+            font-weight: 500;
+            color: var(--text-secondary);
+            white-space: nowrap;
+        }
+
+        #langSelect {
+            flex: 1;
+            padding: 10px 14px;
+            background: rgba(0, 0, 0, 0.3);
+            border: 1px solid var(--border-color);
+            border-radius: 10px;
+            color: var(--text-primary);
+            font-size: 14px;
+            font-family: inherit;
+            font-weight: 500;
+            cursor: pointer;
+            outline: none;
+            transition: border-color 0.2s ease;
+            appearance: none;
+            -webkit-appearance: none;
+            background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' fill='%2394a3b8' viewBox='0 0 16 16'%3E%3Cpath d='M1.5 5.5l6.5 6 6.5-6'/%3E%3C/svg%3E");
+            background-repeat: no-repeat;
+            background-position: right 12px center;
+            padding-right: 32px;
+        }
+
+        #langSelect:focus {
+            border-color: var(--accent);
+        }
+
+        #langSelect option {
+            background: var(--bg-secondary);
+            color: var(--text-primary);
+        }
+
+        /* Responsive */
+        @media (max-width: 520px) {
+            .container { padding: 28px 16px 48px; }
+            h1 { font-size: 28px; }
+            .card { padding: 28px 20px; }
+            #recordBtn { width: 80px; height: 80px; }
+            .results-header { flex-direction: column; align-items: flex-start; gap: 12px; }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- Header -->
+        <header class="header">
+            <div class="header-badge"><span class="dot"></span> faster-whisper &middot; base model</div>
+            <h1>Speech to Text</h1>
+            <p class="subtitle">Record from your microphone and get an instant transcription</p>
+        </header>
+
+        <!-- Recorder Card -->
+        <div class="card">
+            <div class="record-section">
+                <div class="lang-select-wrapper">
+                    <label for="langSelect">Language</label>
+                    <select id="langSelect">
+                        <option value="en" selected>English</option>
+                        <option value="ta">Tamil</option>
+                        <option value="hi">Hindi</option>
+                        <option value="fr">French</option>
+                        <option value="es">Spanish</option>
+                        <option value="de">German</option>
+                        <option value="ja">Japanese</option>
+                        <option value="ko">Korean</option>
+                        <option value="zh">Chinese</option>
+                        <option value="ar">Arabic</option>
+                        <option value="pt">Portuguese</option>
+                        <option value="ru">Russian</option>
+                    </select>
+                </div>
+
+                <button id="recordBtn" aria-label="Record audio">
+                    <!-- Mic icon -->
+                    <svg id="micIcon" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M12 1a4 4 0 0 0-4 4v6a4 4 0 0 0 8 0V5a4 4 0 0 0-4-4z"/>
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M19 10v1a7 7 0 0 1-14 0v-1"/>
+                        <line x1="12" y1="19" x2="12" y2="23"/>
+                        <line x1="8" y1="23" x2="16" y2="23"/>
+                    </svg>
+                    <!-- Stop icon (hidden) -->
+                    <svg id="stopIcon" xmlns="http://www.w3.org/2000/svg" fill="currentColor" viewBox="0 0 24 24" style="display:none">
+                        <rect x="6" y="6" width="12" height="12" rx="2"/>
+                    </svg>
+                </button>
+
+                <span id="timer" class="timer">00:00</span>
+
+                <canvas id="visualizer"></canvas>
+
+                <div id="status" class="status-bar idle">
+                    <span id="statusText">Press the button and start speaking</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Results Card -->
+        <div id="resultsCard" class="card results-card">
+            <div class="results-header">
+                <span class="results-title">Transcript</span>
+                <div class="meta-pills">
+                    <span class="meta-pill">Lang: <span class="value" id="metaLang">--</span></span>
+                    <span class="meta-pill">Confidence: <span class="value" id="metaConf">--</span></span>
+                    <span class="meta-pill">Time: <span class="value" id="metaTime">--</span></span>
+                </div>
+            </div>
+            <div id="transcriptBox" class="transcript-box"></div>
+            <button id="copyBtn" class="copy-btn" aria-label="Copy transcript">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                    <rect x="9" y="9" width="13" height="13" rx="2"/>
+                    <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+                </svg>
+                Copy
+            </button>
+        </div>
+    </div>
+
+    <script>
+        const recordBtn   = document.getElementById('recordBtn');
+        const micIcon     = document.getElementById('micIcon');
+        const stopIcon    = document.getElementById('stopIcon');
+        const timerEl     = document.getElementById('timer');
+        const statusEl    = document.getElementById('status');
+        const statusText  = document.getElementById('statusText');
+        const visualizer  = document.getElementById('visualizer');
+        const resultsCard = document.getElementById('resultsCard');
+        const transcriptBox = document.getElementById('transcriptBox');
+        const metaLang    = document.getElementById('metaLang');
+        const metaConf    = document.getElementById('metaConf');
+        const metaTime    = document.getElementById('metaTime');
+        const copyBtn     = document.getElementById('copyBtn');
+        const langSelect  = document.getElementById('langSelect');
+
+        let mediaRecorder = null;
+        let audioChunks   = [];
+        let timerInterval = null;
+        let seconds       = 0;
+        let audioContext   = null;
+        let analyser       = null;
+        let animFrameId    = null;
+
+        // ---- Timer ----
+        function startTimer() {
+            seconds = 0;
+            timerEl.textContent = '00:00';
+            timerEl.classList.add('visible');
+            timerInterval = setInterval(() => {
+                seconds++;
+                const m = String(Math.floor(seconds / 60)).padStart(2, '0');
+                const s = String(seconds % 60).padStart(2, '0');
+                timerEl.textContent = `${m}:${s}`;
+            }, 1000);
+        }
+
+        function stopTimer() {
+            clearInterval(timerInterval);
+        }
+
+        // ---- Visualizer ----
+        function drawVisualizer(stream) {
+            audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            const source = audioContext.createMediaStreamSource(stream);
+            analyser = audioContext.createAnalyser();
+            analyser.fftSize = 256;
+            source.connect(analyser);
+
+            const canvas = visualizer;
+            const ctx = canvas.getContext('2d');
+            canvas.width = canvas.offsetWidth * 2;
+            canvas.height = canvas.offsetHeight * 2;
+            ctx.scale(2, 2);
+            canvas.classList.add('active');
+
+            const bufferLength = analyser.frequencyBinCount;
+            const dataArray = new Uint8Array(bufferLength);
+            const w = canvas.offsetWidth;
+            const h = canvas.offsetHeight;
+            const barWidth = w / bufferLength * 1.5;
+
+            function draw() {
+                animFrameId = requestAnimationFrame(draw);
+                analyser.getByteFrequencyData(dataArray);
+                ctx.clearRect(0, 0, w, h);
+
+                let x = 0;
+                for (let i = 0; i < bufferLength; i++) {
+                    const barHeight = (dataArray[i] / 255) * h * 0.85;
+                    const gradient = ctx.createLinearGradient(0, h, 0, h - barHeight);
+                    gradient.addColorStop(0, 'rgba(99,102,241,0.6)');
+                    gradient.addColorStop(1, 'rgba(139,92,246,0.9)');
+                    ctx.fillStyle = gradient;
+                    ctx.beginPath();
+                    ctx.roundRect(x, h - barHeight, barWidth - 1, barHeight, 2);
+                    ctx.fill();
+                    x += barWidth;
+                }
+            }
+            draw();
+        }
+
+        function stopVisualizer() {
+            cancelAnimationFrame(animFrameId);
+            visualizer.classList.remove('active');
+            if (audioContext) audioContext.close();
+        }
+
+        // ---- Status helpers ----
+        function setStatus(type, text) {
+            statusEl.className = 'status-bar ' + type;
+            statusText.innerHTML = text;
+        }
+
+        // ---- Record logic ----
+        recordBtn.addEventListener('click', async () => {
+            if (mediaRecorder && mediaRecorder.state === 'recording') {
+                // Stop
+                mediaRecorder.stop();
+                return;
+            }
+
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                audioChunks = [];
+                mediaRecorder = new MediaRecorder(stream);
+
+                mediaRecorder.ondataavailable = (e) => {
+                    audioChunks.push(e.data);
+                };
+
+                mediaRecorder.onstart = () => {
+                    recordBtn.classList.add('recording');
+                    micIcon.style.display = 'none';
+                    stopIcon.style.display = 'block';
+                    setStatus('recording', 'Recording...');
+                    startTimer();
+                    drawVisualizer(stream);
+                };
+
+                mediaRecorder.onstop = async () => {
+                    recordBtn.classList.remove('recording');
+                    micIcon.style.display = 'block';
+                    stopIcon.style.display = 'none';
+                    stopTimer();
+                    stopVisualizer();
+
+                    // Stop all tracks
+                    stream.getTracks().forEach(t => t.stop());
+
+                    setStatus('processing', '<span class="spinner"></span> Transcribing...');
+
+                    const blob = new Blob(audioChunks, { type: 'audio/webm' });
+                    const formData = new FormData();
+                    formData.append('audio', blob, 'recording.webm');
+                    formData.append('language', langSelect.value);
+
+                    try {
+                        const res = await fetch('/transcribe', {
+                            method: 'POST',
+                            body: formData,
+                        });
+
+                        const data = await res.json();
+
+                        if (res.ok) {
+                            transcriptBox.textContent = data.transcript || '';
+                            metaLang.textContent = data.language.toUpperCase();
+                            metaConf.textContent = (data.language_probability * 100).toFixed(0) + '%';
+                            metaTime.textContent = data.processing_time + 's';
+                            resultsCard.classList.add('visible');
+                            setStatus('done', 'Transcription complete');
+                        } else {
+                            setStatus('error', 'Error: ' + (data.error || 'Unknown error'));
+                        }
+                    } catch (err) {
+                        setStatus('error', 'Error: Could not reach the server.');
+                    }
+                };
+
+                mediaRecorder.start();
+            } catch (err) {
+                setStatus('error', 'Microphone access denied.');
+            }
+        });
+
+        // ---- Copy ----
+        copyBtn.addEventListener('click', () => {
+            const text = transcriptBox.textContent;
+            if (!text) return;
+            navigator.clipboard.writeText(text).then(() => {
+                copyBtn.innerHTML = `
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                        <polyline points="20 6 9 17 4 12"/>
+                    </svg> Copied!`;
+                setTimeout(() => {
+                    copyBtn.innerHTML = `
+                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                            <rect x="9" y="9" width="13" height="13" rx="2"/>
+                            <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+                        </svg> Copy`;
+                }, 1500);
+            });
+        });
+    </script>
+</body>
+</html>

@@ -36,26 +36,18 @@ class PlacementPortalClient:
     def _resolve_browser_url(self) -> str:
         """Resolve the URL that Playwright should navigate to.
 
-        Dev Tunnels (*.devtunnels.ms) require GitHub OAuth, which a fresh
-        headless Chromium cannot satisfy.  When the portal server is running
-        locally we can bypass the tunnel and talk to localhost directly.
+        Use the configured forwarded portal by default. A local URL can be
+        selected explicitly for a locally running mock portal.
 
         Priority:
         1. PLACEMENT_PORTAL_LOCAL_URL env-var (explicit override)
-        2. Auto-detect port from devtunnel URL pattern  (e.g. xxx-3000.*)
-        3. Fall back to the configured base_url as-is
+        2. Fall back to the configured base_url as-is
         """
         import re
 
         local_override = os.getenv("PLACEMENT_PORTAL_LOCAL_URL", "").strip()
         if local_override:
             return local_override.rstrip("/")
-
-        # devtunnel URLs look like https://<id>-<port>.<region>.devtunnels.ms
-        match = re.search(r"-(\d+)\.", self.base_url)
-        if "devtunnels.ms" in self.base_url and match:
-            port = match.group(1)
-            return f"http://localhost:{port}"
 
         return self.base_url
 

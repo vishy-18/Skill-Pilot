@@ -20,7 +20,7 @@ import os
 from typing import Any
 
 from fastapi import FastAPI, File, Form, Request, UploadFile
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
 from navigator.schema import (
     DiagnosticQuestion,
@@ -31,6 +31,7 @@ from navigator.schema import (
 from navigator.services import ROLE_SKILLS, NavigatorService
 from navigator.placement_portal import PlacementPortalError
 from navigator.stub import run_arun_demo
+from speech_to_text import transcribe_audio
 
 DB = os.environ.get("SLICE_DB", "run.db")
 app = FastAPI(title="Skill-Pilot")
@@ -1238,7 +1239,7 @@ def career_goals_update(request: Request, role: str = Form(...)):
 # ------------------------------------------------------------- JOB OPPORTUNITIES
 
 @app.get("/job-opportunities", response_class=HTMLResponse)
-async def job_opportunities_view(request: Request, notice: str = "", error: str = ""):
+def job_opportunities_view(request: Request, notice: str = "", error: str = ""):
     svc = get_service()
     student = get_current_student(request, svc)
     if not student:
@@ -1250,7 +1251,7 @@ async def job_opportunities_view(request: Request, notice: str = "", error: str 
     if report:
         target_skills = list(dict.fromkeys(target_skills + report.high_priority_skills))
     try:
-        jobs = await svc.find_placement_opportunities_async(student.student_id)
+        jobs = svc.find_placement_opportunities(student.student_id)
     except PlacementPortalError as exc:
         jobs = []
         error = str(exc)
@@ -1260,12 +1261,7 @@ async def job_opportunities_view(request: Request, notice: str = "", error: str 
 
     notice_html = f"<div class='toast-success' role='status'>Application applied successfully: {html.escape(notice)}</div>" if notice else ""
     error_html = f"<div class='toast-error' role='alert'>{html.escape(error)}</div>" if error else ""
-    try:
-      portal_url = svc.placement_portal_url()
-    except PlacementPortalError as exc:
-      portal_url = ""
-      if not error:
-        error = str(exc)
+    portal_url = svc.placement_portal_url()
     cards = []
     for job in jobs:
         skills = ", ".join(job.get("matched_skills", [])) or "Role alignment"
@@ -1367,7 +1363,7 @@ async def job_opportunities_view(request: Request, notice: str = "", error: str 
 
 
 @app.post("/job-opportunities/decision")
-async def job_opportunities_decision(
+def job_opportunities_decision(
     request: Request,
     job_id: str = Form(...),
     decision: str = Form(...),
@@ -1378,7 +1374,7 @@ async def job_opportunities_decision(
         return RedirectResponse("/login", status_code=303)
     if decision == "yes":
       try:
-        result = await svc.apply_to_placement_job_async(student.student_id, job_id)
+        result = svc.apply_to_placement_job(student.student_id, job_id)
         message = result.get("message", f"Application submitted for {job_id}.")
         return RedirectResponse(f"/job-opportunities?notice={html.escape(message)}", status_code=303)
       except PlacementPortalError as exc:
@@ -2032,7 +2028,7 @@ def progress_view(request: Request):
 # ---------------------------------------------------------- ASSESSMENT (Section 7)
 
 @app.get("/assessment", response_class=HTMLResponse)
-def assessment_view(request: Request, topic: str = "", test_id: str = ""):
+def assessment_view(request: Request, topic: str = "", test_id: str = "", mode: str = ""):
     svc = get_service()
     student = get_current_student(request, svc)
     if not student:
@@ -2042,8 +2038,8 @@ def assessment_view(request: Request, topic: str = "", test_id: str = ""):
     topics = svc.get_assessment_topics(student.student_id)
     scores = svc.get_topic_scores(student.student_id)
     selected_test = svc.get_assessment_test(student.student_id, test_id) if test_id else None
-    if topic and not selected_test:
-        selected_test = svc.create_topic_assessment(student.student_id, topic)
+    if topic and not selected_test and mode in {"mcq", "voice_concept"}:
+      selected_test = svc.create_topic_assessment(student.student_id, topic, mode)
     if selected_test:
         topic = selected_test["topic"]
 
@@ -2054,21 +2050,81 @@ def assessment_view(request: Request, topic: str = "", test_id: str = ""):
     )
     question_cards = ""
     if selected_test:
+        is_voice = selected_test.get("mode") == "voice_concept"
         for index, question in enumerate(selected_test["questions"], 1):
-            options = "".join(
-                f"<label class='assessment-option'><input type='radio' name='answer_{question['question_id']}' value='{html.escape(option)}' required> {html.escape(option)}</label>"
-                for option in question["options"]
-            )
-            question_cards += f"<div class='assessment-question'><span class='badge badge-primary'>Question {index} of 10</span><h3>{html.escape(question['question'])}</h3>{options}</div>"
+            if is_voice:
+                question_id = html.escape(question["question_id"])
+                answer_id = f"answer_{question_id}"
+                options = (
+                    f"<textarea id='{answer_id}' name='{answer_id}' rows='4' required placeholder='Your transcript will appear here. You can edit it before submitting.'></textarea>"
+                    f"<button type='button' class='btn btn-secondary record-answer' data-answer-id='{answer_id}'>Record with SpeakAI</button>"
+                    f"<span class='record-status' id='status_{question_id}' aria-live='polite'></span>"
+                )
+            else:
+                options = "".join(
+                    f"<label class='assessment-option'><input type='radio' name='answer_{question['question_id']}' value='{html.escape(option)}' required> {html.escape(option)}</label>"
+                    for option in question["options"]
+                )
+            question_cards += f"<div class='assessment-question'><span class='badge badge-primary'>Question {index} of 10</span><span class='badge badge-secondary' style='float:right;'>FAQ</span><h3>{html.escape(question['question'])}</h3>{options}</div>"
+        voice_script = """
+        <script>
+        document.querySelectorAll('.record-answer').forEach(function (button) {
+          let recorder;
+          button.addEventListener('click', async function () {
+            const answer = document.getElementById(button.dataset.answerId);
+            const status = document.getElementById('status_' + button.dataset.answerId.replace('answer_', ''));
+            if (recorder && recorder.state === 'recording') {
+              recorder.stop();
+              button.textContent = 'Record again';
+              return;
+            }
+            if (!navigator.mediaDevices || !window.MediaRecorder) {
+              status.textContent = 'Audio recording is not supported in this browser.';
+              return;
+            }
+            const chunks = [];
+            recorder = new MediaRecorder(await navigator.mediaDevices.getUserMedia({audio: true}));
+            recorder.ondataavailable = event => chunks.push(event.data);
+            recorder.onstop = async function () {
+              status.textContent = 'Transcribing...';
+              const data = new FormData();
+              data.append('audio', new Blob(chunks, {type: recorder.mimeType || 'audio/webm'}), 'answer.webm');
+              try {
+                const response = await fetch('/assessment/transcribe', {method: 'POST', body: data});
+                const result = await response.json();
+                if (!response.ok) throw new Error(result.error || 'Transcription failed.');
+                answer.value = result.transcript || '';
+                status.textContent = answer.value ? 'Transcript ready. Review it before submitting.' : 'No speech detected.';
+              } catch (error) {
+                status.textContent = error.message;
+              }
+            };
+            recorder.start();
+            button.textContent = 'Stop recording';
+            status.textContent = 'Listening...';
+          });
+        });
+        </script>
+        """ if is_voice else ""
         test_panel = f"""
         <div class="card assessment-test">
           <div class="card-title"><span>{html.escape(topic)} assessment</span><span class="badge badge-primary">Attempt {selected_test['attempt']}</span></div>
-          <p style="font-size:0.88rem; color:var(--text-muted); margin-bottom:1rem;">Ten fresh questions. Submit when you have answered every question.</p>
+          <p style="font-size:0.88rem; color:var(--text-muted); margin-bottom:1rem;">{'Ten concept questions. Record a spoken answer for each; the transcript is checked against expected keywords.' if is_voice else 'Ten fresh questions. Submit when you have answered every question.'}</p>
           <form method="post" action="/assessment/submit">
             <input type="hidden" name="test_id" value="{html.escape(selected_test['test_id'])}">
             {question_cards}
             <button type="submit" class="btn">Submit {html.escape(topic)} test</button>
           </form>
+          {voice_script}
+        </div>"""
+    elif topic:
+        safe_topic = html.escape(topic)
+        test_panel = f"""
+        <div class='card'>
+          <div class='card-title'>{safe_topic} assessment format</div>
+          <p style='font-size:0.88rem; color:var(--text-muted); margin-bottom:1rem;'>Choose how you want to demonstrate your understanding.</p>
+          <a class='btn' href='/assessment?topic={safe_topic}&mode=mcq'>1. Multiple Choice</a>
+          <a class='btn btn-secondary' href='/assessment?topic={safe_topic}&mode=voice_concept'>2. SpeakAI</a>
         </div>"""
     else:
         test_panel = "<div class='card'><div class='box-info'><strong>Select a topic to begin.</strong><p>Each topic opens a new ten-question test and stores the latest score beside the topic.</p></div></div>"
@@ -2078,6 +2134,17 @@ def assessment_view(request: Request, topic: str = "", test_id: str = ""):
     <div class="assessment-layout"><aside class="card assessment-sidebar"><div class="card-title">Required topics</div><p style="font-size:0.82rem; color:var(--text-muted); margin-bottom:0.75rem;">Latest score</p>{topic_rows}</aside><section>{test_panel}</section></div>
     """
     return render_page("Diagnostic Assessment", content, active_nav="assessment", student=student)
+
+@app.post("/assessment/transcribe")
+async def assessment_transcribe(audio: UploadFile = File(...)):
+    if not audio.filename:
+        return JSONResponse({"error": "No audio file received."}, status_code=400)
+    try:
+        return transcribe_audio(await audio.read(), language="en")
+    except ImportError:
+        return JSONResponse({"error": "Voice transcription is unavailable. Install faster-whisper."}, status_code=503)
+    except Exception as exc:
+        return JSONResponse({"error": f"Transcription failed: {exc}"}, status_code=500)
 
 
 @app.post("/assessment/submit", response_class=HTMLResponse)
@@ -2092,6 +2159,24 @@ async def assessment_submit(request: Request):
     test = svc.get_assessment_test(student.student_id, test_id)
     answers = {question["question_id"]: str(form.get(f"answer_{question['question_id']}", "")) for question in (test or {}).get("questions", [])}
     result = svc.submit_topic_assessment(student.student_id, test_id, answers)
+    feedback = result.get("feedback", [])
+    question_by_id = {question["question_id"]: question for question in (test or {}).get("questions", [])}
+    feedback_html = "".join(
+      (
+        f"<div class='box-{'success' if item.get('is_correct') else 'danger'}' style='margin-top:0.8rem;'>"
+        f"<strong>{'Correct' if item.get('is_correct') else 'Incorrect'}:</strong> "
+        f"{html.escape(question_by_id.get(item['question_id'], {}).get('question', ''))}"
+        f"<p style='margin-top:0.45rem;'><strong>Your answer:</strong> {html.escape(item.get('answer', '') or 'No answer')}</p>"
+        + (
+          f"<p><strong>Correct answer:</strong> {html.escape(item.get('correct_answer', ''))}</p>"
+          if 'correct_answer' in item else
+          f"<p><strong>Expected concepts:</strong> {html.escape(', '.join(item.get('expected_keywords', [])))}</p>"
+          f"<p><strong>Evidence:</strong> keywords {item.get('keyword_score', 0):.0%}, context {item.get('context_score', 0):.0%}, confidence {item.get('confidence', 0):.0%}</p>"
+        )
+        + "</div>"
+      )
+      for item in feedback
+    )
 
     content = f"""
     <div class="card">
@@ -2104,7 +2189,7 @@ async def assessment_submit(request: Request):
           Review the explanations below, then ask the AI Coach about any topic that still feels unclear.
         </p>
       </div>
-      {''.join(f"<div class='box-info'><strong>{html.escape(q['skill'])}:</strong> {html.escape(q['explanation'])}</div>" for q in (test or {}).get('questions', []))}
+      {feedback_html}
       <a href="/assessment" class="btn" style="margin-top:1rem;">Back to topics</a>
       <a href="/assessment?topic={html.escape(result['topic'])}" class="btn btn-secondary" style="margin-top:1rem;">Try a fresh test</a>
     </div>
